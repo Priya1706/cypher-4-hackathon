@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 import modules.actions as actions
 import modules.common as common
+import modules.inventory as inventory
+import modules.seasonal_demand as seasonal
 import agent
 
 
@@ -267,6 +269,59 @@ class TestAgentInvestigation(unittest.TestCase):
         )
         self.assertEqual(comp["status"], "insufficient_data")
         self.assertEqual(len(comp["options"]), 0)
+
+    def test_b2231_recall_exposure_and_hybrid_allocation(self):
+        """Verify recall exposure, PO deficit, and hybrid allocation against live project data."""
+        recalled = inventory.trace_batch("B2231")
+        affected = inventory.get_affected_customers("B2231")
+        clean = inventory.trace_batch("B2240")
+        stock_gap = seasonal.calculate_stock_gap("SKU-AMOX-500")
+        po = stock_gap["incoming_purchase_orders"][0]
+
+        comparison = agent.compare_options(
+            {"type": "recall_replacement", "batch_id": "B2231"},
+            {
+                "inventory_available": True,
+                "recalled_wh_qty": recalled["data"]["total_warehouse_stock"],
+                "recalled_disp_qty": recalled["data"]["total_dispatched_qty"],
+                "hospital_disp_qty": affected["hospital_dispatched_units"],
+                "chemist_disp_qty": affected["chemist_dispatched_units"],
+                "hospitals_count": affected["hospitals_count"],
+                "chemists_count": affected["chemists_count"],
+                "clean_stock_batch": clean["batch_id"],
+                "clean_stock_qty": clean["data"]["total_warehouse_stock"],
+                "incoming_po_number": po["po"],
+                "incoming_po_qty": po["qty"],
+                "incoming_po_expected": po["expected_date"],
+            },
+        )
+
+        self.assertEqual(comparison["status"], "feasible_comparison")
+        self.assertEqual(
+            comparison["inventory_exposure_breakdown"]["total_recall_exposure_units"],
+            820,
+        )
+
+        options = {option["option_id"]: option for option in comparison["options"]}
+        po_option = options["OPT-2-EXPEDITE-PO"]["cited_evidence"]
+        self.assertEqual(po_option["shortfall_units"], 20)
+        self.assertEqual(po_option["total_recall_exposure"], 820)
+        self.assertEqual(po_option["po_quantity"], 800)
+
+        hybrid = options["OPT-3-HYBRID-PRIORITY"]["cited_evidence"]
+        self.assertEqual(hybrid["stage_1_allocated"], 140)
+        self.assertEqual(hybrid["stage_1_clean_stock_available"], 400)
+        self.assertLessEqual(
+            hybrid["stage_1_allocated"], hybrid["stage_1_clean_stock_available"]
+        )
+        self.assertEqual(hybrid["stage_2_allocated"], 680)
+        self.assertEqual(hybrid["stage_2_po_available"], 800)
+        self.assertLessEqual(
+            hybrid["stage_2_allocated"], hybrid["stage_2_po_available"]
+        )
+        self.assertEqual(hybrid["total_allocated"], 820)
+        self.assertEqual(hybrid["total_shortfall"], 0)
+        self.assertIn("2026-10-18", hybrid["po_timing_rule"])
 
 
 if __name__ == "__main__":

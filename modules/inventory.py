@@ -323,6 +323,9 @@ def get_affected_customers(batch_id: str, data_dir: Optional[str] = None) -> Dic
             "total_qty_received": c_qty,
         })
 
+    hospital_qty = sum(c["total_qty_received"] for c in customer_summary if "hospital" in c["type"].lower())
+    chemist_qty = sum(c["total_qty_received"] for c in customer_summary if "hospital" not in c["type"].lower())
+
     return {
         "success": True,
         "status": "success",
@@ -331,11 +334,15 @@ def get_affected_customers(batch_id: str, data_dir: Optional[str] = None) -> Dic
         "total_customers_count": len(customer_summary),
         "chemists_count": chemist_count,
         "hospitals_count": hospital_count,
+        "hospital_dispatched_units": hospital_qty,
+        "chemist_dispatched_units": chemist_qty,
         "customers": customer_summary,
         "warnings": [],
         "evidence": {
             "dispatch_entries": len(batch_dispatches),
             "unique_recipients": len(customer_summary),
+            "hospital_dispatched_units": hospital_qty,
+            "chemist_dispatched_units": chemist_qty,
         },
         "message": f"Identified {len(customer_summary)} customers ({chemist_count} chemists, {hospital_count} hospitals) for batch '{clean_batch}'.",
     }
