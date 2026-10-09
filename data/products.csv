@@ -1,0 +1,6 @@
+sku,molecule,brand,category,storage,critical_drug
+SKU-AMOX-500,Amoxicillin 500mg,Aro-Amox 500,Antibiotic,Controlled Room Temp (15-25°C),False
+SKU-INS-REG,Regular Insulin 100IU/ml,Aro-Insulin R,Anti-diabetic,Cold Chain (2-8°C),True
+SKU-PARA-650,Paracetamol 650mg,Aro-Para 650,Antipyretic/Analgesic,Room Temp (15-25°C),False
+SKU-RAB-VAX,Rabies Vaccine (Human),Aro-Rabivax,Vaccine,Cold Chain (2-8°C),True
+SKU-AZI-250,Azithromycin 250mg,Aro-Azithro,Antibiotic,Room Temp (15-25°C),False

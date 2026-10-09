@@ -1,0 +1,39 @@
+customer,type,location,credit_terms
+HOSP-Victoria,Hospital,Bengaluru Central,Net 45
+HOSP-Manipal-East,Hospital,Bengaluru East,Net 30
+CHEM-Bengaluru-001,Chemist,Bengaluru Zone 1,Net 15
+CHEM-Bengaluru-002,Chemist,Bengaluru Zone 2,Net 30
+CHEM-Bengaluru-003,Chemist,Bengaluru Zone 3,Net 15
+CHEM-Bengaluru-004,Chemist,Bengaluru Zone 4,Net 30
+CHEM-Bengaluru-005,Chemist,Bengaluru Zone 5,Net 15
+CHEM-Bengaluru-006,Chemist,Bengaluru Zone 1,Net 30
+CHEM-Bengaluru-007,Chemist,Bengaluru Zone 2,Net 15
+CHEM-Bengaluru-008,Chemist,Bengaluru Zone 3,Net 30
+CHEM-Bengaluru-009,Chemist,Bengaluru Zone 4,Net 15
+CHEM-Bengaluru-010,Chemist,Bengaluru Zone 5,Net 30
+CHEM-Bengaluru-011,Chemist,Bengaluru Zone 1,Net 15
+CHEM-Bengaluru-012,Chemist,Bengaluru Zone 2,Net 30
+CHEM-Bengaluru-013,Chemist,Bengaluru Zone 3,Net 15
+CHEM-Bengaluru-014,Chemist,Bengaluru Zone 4,Net 30
+CHEM-Bengaluru-015,Chemist,Bengaluru Zone 5,Net 15
+CHEM-Bengaluru-016,Chemist,Bengaluru Zone 1,Net 30
+CHEM-Bengaluru-017,Chemist,Bengaluru Zone 2,Net 15
+CHEM-Bengaluru-018,Chemist,Bengaluru Zone 3,Net 30
+CHEM-Bengaluru-019,Chemist,Bengaluru Zone 4,Net 15
+CHEM-Bengaluru-020,Chemist,Bengaluru Zone 5,Net 30
+CHEM-Bengaluru-021,Chemist,Bengaluru Zone 1,Net 15
+CHEM-Bengaluru-022,Chemist,Bengaluru Zone 2,Net 30
+CHEM-Bengaluru-023,Chemist,Bengaluru Zone 3,Net 15
+HOSP-KIMS-Hubballi,Hospital,Hubballi,Net 45
+HOSP-KR-Mysuru,Hospital,Mysuru,Net 45
+CHEM-Regional-024,Chemist,Hubballi,Net 30
+CHEM-Regional-025,Chemist,Mysuru,Net 30
+CHEM-Regional-026,Chemist,Hubballi,Net 30
+CHEM-Regional-027,Chemist,Mysuru,Net 30
+CHEM-Regional-028,Chemist,Hubballi,Net 30
+CHEM-Regional-029,Chemist,Mysuru,Net 30
+CHEM-Regional-030,Chemist,Hubballi,Net 30
+CHEM-Regional-031,Chemist,Mysuru,Net 30
+CHEM-Regional-032,Chemist,Hubballi,Net 30
+CHEM-Regional-033,Chemist,Mysuru,Net 30
+CHEM-Regional-034,Chemist,Hubballi,Net 30

@@ -54,3 +54,7 @@ bin/
 # Misc
 *.local
 *.bak
+
+# BatchGuard local action store
+data/actions_store.json
+.actions_store.json

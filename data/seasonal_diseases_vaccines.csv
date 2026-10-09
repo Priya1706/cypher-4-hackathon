@@ -1,0 +1,9 @@
+Disease,Seasonality,Vaccine Availability,Target Population / Recommendation
+Influenza (Flu),Fall / Winter,Yes (Annual),Everyone 6 months and older
+Respiratory Syncytial Virus (RSV),Fall / Winter,Yes,Older adults; pregnant individuals; and infants
+COVID-19,Winter spikes (can fluctuate),Yes (Updated regularly),Everyone 6 months and older
+Lyme Disease,Spring / Summer (Tick season),In clinical trials / None widely available,N/A (Prevention via tick control)
+Norovirus,Winter,No,N/A (Hand hygiene and sanitation)
+Rotavirus,Winter / Spring,Yes,Infants (oral vaccine series)
+Meningococcal Disease,Winter / Spring spikes,Yes,Adolescents; young adults; and high-risk groups
+Pertussis (Whooping Cough),Year-round (spikes in Summer/Fall),Yes (DTaP/Tdap),Infants; children; pregnant individuals; and adults
