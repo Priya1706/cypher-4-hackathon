@@ -1,0 +1,76 @@
+sku,molecule,brand,category,storage,critical_drug
+PH-001,Paracetamol 650mg,Dr Reddys,Analgesic,Ambient,No
+PH-002,Paracetamol 650mg,Torrent,Analgesic,Ambient,No
+PH-003,Paracetamol 650mg,Mankind,Analgesic,Ambient,No
+PH-004,Amoxicillin + Clavulanic 625mg,Cipla,Antibiotic,Ambient,Yes
+PH-005,Amoxicillin + Clavulanic 625mg,Lupin,Antibiotic,Ambient,Yes
+PH-006,Amoxicillin + Clavulanic 625mg,Glenmark,Antibiotic,Ambient,Yes
+PH-007,Azithromycin 500mg,Torrent,Antibiotic,Ambient,Yes
+PH-008,Azithromycin 500mg,Zydus,Antibiotic,Ambient,Yes
+PH-009,Azithromycin 500mg,Glenmark,Antibiotic,Ambient,Yes
+PH-010,Metformin 500mg,Biocon,Antidiabetic,Ambient,Yes
+PH-011,Metformin 500mg,Sun Pharma,Antidiabetic,Ambient,Yes
+PH-012,Metformin 500mg,Lupin,Antidiabetic,Ambient,Yes
+PH-013,Insulin Glargine 100IU/ml,Alkem,Antidiabetic,2-8C,Yes
+PH-014,Insulin Glargine 100IU/ml,Dr Reddys,Antidiabetic,2-8C,Yes
+PH-015,Insulin Glargine 100IU/ml,Glenmark,Antidiabetic,2-8C,Yes
+PH-016,Insulin Regular 40IU/ml,Sun Pharma,Antidiabetic,2-8C,Yes
+PH-017,Insulin Regular 40IU/ml,Zydus,Antidiabetic,2-8C,Yes
+PH-018,Insulin Regular 40IU/ml,Alkem,Antidiabetic,2-8C,Yes
+PH-019,Atorvastatin 10mg,Lupin,Cardiac,Ambient,Yes
+PH-020,Atorvastatin 10mg,Sun Pharma,Cardiac,Ambient,Yes
+PH-021,Atorvastatin 10mg,Zydus,Cardiac,Ambient,Yes
+PH-022,Amlodipine 5mg,Sun Pharma,Cardiac,Ambient,Yes
+PH-023,Amlodipine 5mg,Dr Reddys,Cardiac,Ambient,Yes
+PH-024,Amlodipine 5mg,Biocon,Cardiac,Ambient,Yes
+PH-025,Pantoprazole 40mg,Zydus,Gastro,Ambient,No
+PH-026,Pantoprazole 40mg,Glenmark,Gastro,Ambient,No
+PH-027,Pantoprazole 40mg,Biocon,Gastro,Ambient,No
+PH-028,Cetirizine 10mg,Biocon,Antiallergic,Ambient,No
+PH-029,Cetirizine 10mg,Cipla,Antiallergic,Ambient,No
+PH-030,Cetirizine 10mg,Lupin,Antiallergic,Ambient,No
+PH-031,Cough Syrup 100ml,Torrent,Respiratory,Ambient,No
+PH-032,Cough Syrup 100ml,Biocon,Respiratory,Ambient,No
+PH-033,Cough Syrup 100ml,Dr Reddys,Respiratory,Ambient,No
+PH-034,Salbutamol Inhaler,Torrent,Respiratory,Ambient,Yes
+PH-035,Salbutamol Inhaler,Dr Reddys,Respiratory,Ambient,Yes
+PH-036,Salbutamol Inhaler,Sun Pharma,Respiratory,Ambient,Yes
+PH-037,Hepatitis B Vaccine,Glenmark,Vaccine,2-8C,Yes
+PH-038,Hepatitis B Vaccine,Alkem,Vaccine,2-8C,Yes
+PH-039,Hepatitis B Vaccine,Mankind,Vaccine,2-8C,Yes
+PH-040,Rabies Vaccine,Lupin,Vaccine,2-8C,Yes
+PH-041,Rabies Vaccine,Cipla,Vaccine,2-8C,Yes
+PH-042,Rabies Vaccine,Zydus,Vaccine,2-8C,Yes
+PH-043,Vitamin D3 60K,Mankind,Supplement,Ambient,No
+PH-044,Vitamin D3 60K,Lupin,Supplement,Ambient,No
+PH-045,Vitamin D3 60K,Zydus,Supplement,Ambient,No
+PH-046,ORS Sachet,Lupin,Electrolyte,Ambient,No
+PH-047,ORS Sachet,Biocon,Electrolyte,Ambient,No
+PH-048,ORS Sachet,Torrent,Electrolyte,Ambient,No
+PH-049,Ondansetron 4mg,Torrent,Antiemetic,Ambient,No
+PH-050,Ondansetron 4mg,Dr Reddys,Antiemetic,Ambient,No
+PH-051,Ondansetron 4mg,Lupin,Antiemetic,Ambient,No
+PH-052,Ceftriaxone 1g Inj,Mankind,Antibiotic,Ambient,Yes
+PH-053,Ceftriaxone 1g Inj,Zydus,Antibiotic,Ambient,Yes
+PH-054,Ceftriaxone 1g Inj,Torrent,Antibiotic,Ambient,Yes
+PH-055,Enoxaparin 40mg Inj,Alkem,Anticoagulant,2-8C,Yes
+PH-056,Enoxaparin 40mg Inj,Sun Pharma,Anticoagulant,2-8C,Yes
+PH-057,Enoxaparin 40mg Inj,Zydus,Anticoagulant,2-8C,Yes
+PH-058,Losartan 50mg,Torrent,Cardiac,Ambient,Yes
+PH-059,Losartan 50mg,Dr Reddys,Cardiac,Ambient,Yes
+PH-060,Losartan 50mg,Alkem,Cardiac,Ambient,Yes
+PH-061,Levothyroxine 50mcg,Zydus,Thyroid,Ambient,Yes
+PH-062,Levothyroxine 50mcg,Biocon,Thyroid,Ambient,Yes
+PH-063,Levothyroxine 50mcg,Glenmark,Thyroid,Ambient,Yes
+PH-064,Montelukast 10mg,Lupin,Respiratory,Ambient,No
+PH-065,Montelukast 10mg,Sun Pharma,Respiratory,Ambient,No
+PH-066,Montelukast 10mg,Alkem,Respiratory,Ambient,No
+PH-067,Diclofenac Gel,Lupin,Analgesic,Ambient,No
+PH-068,Diclofenac Gel,Dr Reddys,Analgesic,Ambient,No
+PH-069,Diclofenac Gel,Torrent,Analgesic,Ambient,No
+PH-070,Multivitamin,Biocon,Supplement,Ambient,No
+PH-071,Multivitamin,Cipla,Supplement,Ambient,No
+PH-072,Multivitamin,Zydus,Supplement,Ambient,No
+PH-073,Omeprazole 20mg,Alkem,Gastro,Ambient,No
+PH-074,Omeprazole 20mg,Mankind,Gastro,Ambient,No
+PH-075,Omeprazole 20mg,Torrent,Gastro,Ambient,No

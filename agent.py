@@ -22,6 +22,8 @@ import modules.environment as env
 import modules.seasonal_demand as seasonal
 import modules.actions as actions
 
+REFERENCE_DATE = os.environ.get("BATCHGUARD_AS_OF_DATE", "2026-10-09")
+
 
 def get_available_tools() -> List[Dict[str, Any]]:
     """
@@ -71,6 +73,13 @@ def get_available_tools() -> List[Dict[str, Any]]:
             "is_implemented": True,
         },
         {
+            "name": "forecast_external_weekly_sales",
+            "module": "modules.seasonal_demand",
+            "description": "Evaluate the separate external Kaggle weekly pharmacy-sales experiment.",
+            "is_available": hasattr(seasonal, "forecast_external_weekly_sales"),
+            "is_implemented": True,
+        },
+        {
             "name": "create_action",
             "module": "modules.actions",
             "description": "Stage a simulated decision-support action for human review.",
@@ -101,9 +110,14 @@ def classify_request(user_query: str) -> Dict[str, Any]:
     batch_id = batch_matches[0].upper() if batch_matches else None
 
     # Extract Product ID candidates like SKU-AMOX-500, PARA-650, P101
-    prod_pattern = r"\b(SKU-[A-Za-z0-9\-]+|PARA-\d{3}|AMOX-\d{3}|INS-[A-Za-z]+|AZI-\d{3}|RAB-\w+)\b"
+    prod_pattern = r"\b(SKU-[A-Za-z0-9\-]+|PH-\d{3}|PARA-\d{3}|AMOX-\d{3}|INS-[A-Za-z]+|AZI-\d{3}|RAB-\w+)\b"
     prod_matches = re.findall(prod_pattern, query_clean, flags=re.IGNORECASE)
     product_id = prod_matches[0].upper() if prod_matches else None
+    category_pattern = r"\b(M01AB|M01AE|N02BA|N02BE|N05B|N05C|R03|R06)\b"
+    category_matches = re.findall(category_pattern, query_clean, flags=re.IGNORECASE)
+    external_category = category_matches[0].upper() if category_matches else None
+    if batch_id and batch_id.upper() in {category.upper() for category in category_matches}:
+        batch_id = None
 
     # Extract quantity if present
     qty_pattern = r"\b(\d+)\s*(?:units?|boxes?|vials?|bottles?|packs?)\b"
@@ -113,7 +127,7 @@ def classify_request(user_query: str) -> Dict[str, Any]:
     # Determine intent
     if any(k in query_lower for k in ["compare", "option", "replacement", "alternative", "trade-off"]):
         intent = "compare_options"
-        tools_needed = ["check_recall", "trace_batch", "forecast_seasonal_demand"]
+        tools_needed = ["trace_batch", "check_recall", "get_affected_customers", "compare_options"]
     elif any(k in query_lower for k in ["temperature", "excursion", "sensor", "breach", "cold chain", "environmental"]):
         intent = "check_environment"
         tools_needed = ["check_temperature_breach"]
@@ -122,7 +136,7 @@ def classify_request(user_query: str) -> Dict[str, Any]:
         tools_needed = ["check_expiry"]
     elif any(k in query_lower for k in ["seasonal", "demand", "shortage", "forecast", "surge"]):
         intent = "forecast_demand"
-        tools_needed = ["forecast_seasonal_demand"]
+        tools_needed = ["forecast_external_weekly_sales" if external_category else "forecast_seasonal_demand"]
     elif any(k in query_lower for k in ["dispatch", "ship", "send"]):
         intent = "validate_dispatch"
         tools_needed = ["validate_dispatch"]
@@ -138,6 +152,7 @@ def classify_request(user_query: str) -> Dict[str, Any]:
         "entities": {
             "batch_id": batch_id,
             "product_id": product_id,
+            "external_category": external_category,
             "quantity": quantity,
         },
         "tools_needed": tools_needed,
@@ -153,7 +168,6 @@ def compare_options(problem: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[s
     """
     problem_type = problem.get("type", "recall_replacement")
     batch_id = problem.get("batch_id")
-    sku = evidence.get("sku", "SKU-AMOX-500")
 
     # If inventory data was unavailable
     if not evidence or evidence.get("inventory_available") is False:
@@ -165,28 +179,46 @@ def compare_options(problem: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[s
             "recommendation_summary": "Await inventory data before evaluating options.",
         }
 
+    required_evidence = (
+        "recalled_wh_qty", "recalled_disp_qty", "hospital_disp_qty", "chemist_disp_qty",
+        "hospitals_count", "chemists_count", "clean_stock_batch", "clean_stock_qty",
+        "incoming_po_number", "incoming_po_qty", "incoming_po_expected",
+    )
+    missing_evidence = [key for key in required_evidence if key not in evidence or evidence[key] is None]
+    if missing_evidence:
+        return {
+            "status": "insufficient_data",
+            "message": "Verified recall and replacement evidence is incomplete; no options were generated.",
+            "missing_information": missing_evidence,
+            "options": [],
+            "recommendation_summary": "Await verified batch, customer, clean-stock, and incoming-order records before evaluating options.",
+        }
+
+    if problem_type not in ("recall_replacement", "stock_shortage"):
+        return {"status": "not_applicable", "message": "Not applicable to this investigation.", "options": []}
+
     options = []
 
     # Case: Recalled batch needing replacement (e.g., B2231)
     if problem_type in ("recall_replacement", "stock_shortage"):
         # Verified data counts
-        recalled_wh_qty = int(evidence.get("recalled_wh_qty", 180))       # 180 units in warehouse
-        recalled_disp_qty = int(evidence.get("recalled_disp_qty", 640))   # 640 units historically dispatched
+        recalled_wh_qty = int(evidence["recalled_wh_qty"])
+        recalled_disp_qty = int(evidence["recalled_disp_qty"])
         total_recall_exposure = recalled_wh_qty + recalled_disp_qty       # 820 units total recall exposure
 
         # Historical customer dispatch quantities from dispatches.csv
-        hospital_disp_qty = int(evidence.get("hospital_disp_qty", 140))   # 140 units historically dispatched to 2 hospitals
-        chemist_disp_qty = int(evidence.get("chemist_disp_qty", 500))     # 500 units historically dispatched to 23 chemists
-        hospitals_count = int(evidence.get("hospitals_count", 2))
-        chemists_count = int(evidence.get("chemists_count", 23))
+        hospital_disp_qty = int(evidence["hospital_disp_qty"])
+        chemist_disp_qty = int(evidence["chemist_disp_qty"])
+        hospitals_count = int(evidence["hospitals_count"])
+        chemists_count = int(evidence["chemists_count"])
 
         # Available supplies: On-hand clean stock vs Pipeline Purchase Order
-        clean_stock_batch = str(evidence.get("clean_stock_batch", "B2240"))
-        clean_stock_qty = int(evidence.get("clean_stock_qty", 400))       # 400 on-hand units in warehouse today
+        clean_stock_batch = str(evidence["clean_stock_batch"])
+        clean_stock_qty = int(evidence["clean_stock_qty"])
 
-        po_number = str(evidence.get("incoming_po_number", "PO-2026-0911"))
-        po_qty = int(evidence.get("incoming_po_qty", 800))                 # 800 units in pipeline PO
-        po_expected = str(evidence.get("incoming_po_expected", "2026-10-18"))
+        po_number = str(evidence["incoming_po_number"])
+        po_qty = int(evidence["incoming_po_qty"])
+        po_expected = str(evidence["incoming_po_expected"])
         po_status_desc = f"{po_number} ({po_qty} units, expected delivery: {po_expected})"
 
         # Option 1: Immediate On-Hand Clean Stock Allocation (Batch B2240)
@@ -196,8 +228,8 @@ def compare_options(problem: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[s
             "feasibility": f"Feasible immediately (Warehouse has {clean_stock_qty} on-hand units)",
             "demand_assumptions": (
                 f"Prioritizes immediate replacement for acute hospital need ({hospital_disp_qty} units across {hospitals_count} hospitals). "
-                "Note on Data: 140 units is verified from dispatches.csv (80 to HOSP-Victoria, 60 to HOSP-Manipal-East); "
-                "assuming 100% replacement demand is an illustrative assumption. "
+                f"Verified hospital dispatches total {hospital_disp_qty} units across {hospitals_count} hospitals; "
+                "assuming 100% replacement demand is illustrative. "
                 f"Total recall exposure demand is {total_recall_exposure} units ({recalled_wh_qty} warehouse + {recalled_disp_qty} dispatched)."
             ),
             "available_supply": f"{clean_stock_qty} units (on-hand clean batch {clean_stock_batch})",
@@ -224,7 +256,7 @@ def compare_options(problem: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[s
                 "allocated_units": hospital_disp_qty,
                 "remaining_on_hand_buffer": clean_stock_qty - hospital_disp_qty,
                 "shortfall_against_total_exposure": total_recall_exposure - hospital_disp_qty,
-                "demand_provenance": "140 units is historical hospital dispatches from dispatches.csv (illustrative 100% replacement demand assumption).",
+                "demand_provenance": f"{hospital_disp_qty} hospital units are based on verified dispatch records (illustrative 100% replacement demand assumption).",
             },
         })
 
@@ -272,10 +304,10 @@ def compare_options(problem: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[s
         })
 
         # Option 3: Two-Stage Hybrid Priority Allocation (Recommended)
-        # Stage 1: Allocate 140 from on-hand clean stock B2240 (400 on hand)
+        # Stage 1: Allocate hospital replacement demand from verified on-hand clean stock
         stage_1_alloc = hospital_disp_qty
         stage_1_remaining_clean = clean_stock_qty - stage_1_alloc  # 400 - 140 = 260
-        # Stage 2: Allocate 500 for chemists + 180 for warehouse replenishment from PO (800 PO supply)
+        # Stage 2: Allocate chemist replacement demand and warehouse replenishment from incoming supply
         stage_2_alloc = chemist_disp_qty + recalled_wh_qty  # 500 + 180 = 680
         stage_2_remaining_po = po_qty - stage_2_alloc       # 800 - 680 = 120
         total_combined_supply = clean_stock_qty + po_qty    # 400 + 800 = 1200
@@ -317,7 +349,8 @@ def compare_options(problem: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[s
             "trade_offs": f"Requires phased delivery coordination and notifying retail chemists of fulfillment post-{po_expected}.",
             "limitations": f"Stage 2 execution depends on the supplier delivering {po_number} on schedule without transit delays.",
             "cited_evidence": {
-                "stage_1_hospitals": ["HOSP-Victoria (80 units)", "HOSP-Manipal-East (60 units)"],
+                "stage_1_hospital_count": hospitals_count,
+                "stage_1_hospital_units": hospital_disp_qty,
                 "stage_1_allocated": stage_1_alloc,
                 "stage_1_clean_stock_available": clean_stock_qty,
                 "stage_1_remaining_clean_stock": stage_1_remaining_clean,
@@ -348,13 +381,15 @@ def compare_options(problem: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[s
             "total_recall_exposure_units": total_recall_exposure,
             "hospital_dispatched_units": hospital_disp_qty,
             "chemist_dispatched_units": chemist_disp_qty,
-            "data_provenance": "140 hospital and 500 chemist units are historical dispatches from dispatches.csv (illustrative 100% replacement demand assumptions).",
+            "data_provenance": f"{hospital_disp_qty} hospital and {chemist_disp_qty} chemist units are from verified dispatch records (illustrative 100% replacement demand assumptions).",
         },
         "recommendation_summary": (
-            "Option 3 (Two-Stage Hybrid Allocation) is optimal: immediately protect acute hospital patients using "
-            "140 units of clean on-hand batch B2240 (leaving 260 units buffer), and fulfill retail chemists (500 units) "
-            "and warehouse restocking (180 units) from incoming PO-2026-0911 upon its arrival on 2026-10-18 (leaving 120 units surplus). "
-            "This resolves Option 2's 20-unit shortfall with zero net deficit."
+            f"Option 3 (Two-Stage Hybrid Allocation) is optimal: allocate {hospital_disp_qty} hospital units "
+            f"from clean on-hand batch {clean_stock_batch}, leaving {stage_1_remaining_clean} units, then fulfill "
+            f"{chemist_disp_qty} chemist units and replenish {recalled_wh_qty} warehouse units from incoming "
+            f"{po_number} after {po_expected}, leaving {stage_2_remaining_po} units of that order. "
+            f"The combined plan addresses {total_recall_exposure} units of recall exposure with "
+            f"{total_remaining_buffer} units remaining across both supply sources."
         ),
     }
 
@@ -369,26 +404,45 @@ def generate_recommendation(user_query: str, evidence: Dict[str, Any]) -> Dict[s
     rec_text = ""
     suggested_action = None
 
-    if intent in ("investigate_batch", "compare_options"):
+    if intent == "compare_options":
+        comparison = evidence.get("options_comparison", {})
+        if comparison.get("options"):
+            rec_text = comparison.get("recommendation_summary", "Options were compared from verified evidence.")
+        else:
+            missing = comparison.get("missing_information", [])
+            rec_text = "Replacement comparison unavailable. Missing evidence: " + (", ".join(missing) if missing else comparison.get("message", "required evidence unavailable")) + "."
+    elif intent == "investigate_batch":
         is_recalled = evidence.get("is_recalled", False)
         if is_recalled:
-            rec_text = (
-                f"Batch '{batch_id}' is subject to an active Class I recall directive. "
-                f"1. Immediately quarantine all {evidence.get('recalled_wh_qty', 180)} units remaining in the warehouse. "
-                f"2. Issue customer recall notices to the {evidence.get('hospitals_count', 2)} hospitals ({evidence.get('hospital_disp_qty', 140)} units) and {evidence.get('chemists_count', 23)} chemists ({evidence.get('chemist_disp_qty', 500)} units). "
-                "3. Authorize Option 3 (Two-Stage Hybrid Allocation): immediately allocate 140 units from clean on-hand batch B2240 for acute hospital need (retaining 260 units buffer), and allocate incoming PO-2026-0911 (800 units, arriving 2026-10-18) for retail chemists and warehouse restocking upon arrival (leaving 120 units surplus)."
+            required_recall_evidence = (
+                "recalled_wh_qty", "recalled_disp_qty", "hospitals_count", "hospital_disp_qty",
+                "chemists_count", "chemist_disp_qty", "total_customers", "clean_stock_batch",
+                "clean_stock_qty", "incoming_po_number", "incoming_po_qty", "incoming_po_expected",
             )
-            suggested_action = {
-                "action_type": "quarantine_and_recall_notification",
-                "details": {
-                    "batch_id": batch_id,
-                    "sku": evidence.get("sku"),
-                    "warehouse_units_quarantined": evidence.get("recalled_wh_qty", 180),
-                    "total_customers_affected": evidence.get("total_customers", 25),
-                    "dispatched_units_to_trace": evidence.get("recalled_disp_qty", 640),
-                    "replacement_batch": "B2240",
-                },
-            }
+            if any(key not in evidence or evidence[key] is None for key in required_recall_evidence):
+                rec_text = "A recall is confirmed, but verified replacement evidence is incomplete. No quantitative response recommendation or simulated action was prepared."
+            else:
+                rec_text = (
+                    f"Batch '{batch_id}' is subject to an active {evidence.get('recall_class', 'recall')} directive. "
+                    f"Quarantine {evidence['recalled_wh_qty']} units remaining in the warehouse and trace "
+                    f"{evidence['recalled_disp_qty']} dispatched units across {evidence['total_customers']} customers. "
+                    f"The verified records show {evidence['hospital_disp_qty']} hospital units and "
+                    f"{evidence['chemist_disp_qty']} chemist units. Replacement options use clean batch "
+                    f"{evidence['clean_stock_batch']} ({evidence['clean_stock_qty']} units on hand) and "
+                    f"incoming order {evidence['incoming_po_number']} ({evidence['incoming_po_qty']} units, "
+                    f"expected {evidence['incoming_po_expected']})."
+                )
+                suggested_action = {
+                    "action_type": "quarantine_and_recall_notification",
+                    "details": {
+                        "batch_id": batch_id,
+                        "sku": evidence.get("sku"),
+                        "warehouse_units_quarantined": evidence["recalled_wh_qty"],
+                        "total_customers_affected": evidence["total_customers"],
+                        "dispatched_units_to_trace": evidence["recalled_disp_qty"],
+                        "replacement_batch": evidence["clean_stock_batch"],
+                    },
+                }
         else:
             rec_text = (
                 f"Batch '{batch_id}' has no active recall notices. Review expiry date and FEFO priority before standard dispatch."
@@ -399,25 +453,30 @@ def generate_recommendation(user_query: str, evidence: Dict[str, Any]) -> Dict[s
         if excursions:
             rec_text = (
                 f"Detected {len(excursions)} cold-chain storage excursion event(s) exceeding 8.0°C. "
-                "Recommendation: Quarantine cold-chain stocks in affected cold rooms (e.g. Regular Insulin B1092) "
-                "and escalate to the Qualified Person / QA Officer for stability verification."
+                "Recommendation: review the returned facility, storage-unit, time-window, peak, and configured-limit evidence with QA. "
+                "Do not infer affected batches where environmental records do not identify them."
             )
-            suggested_action = {
-                "action_type": "quarantine_excursion_stock",
-                "details": {
-                    "location": "WH-Central-Bengaluru CR-01",
-                    "excursion_event_count": len(excursions),
-                    "reason": "Temperature exceeded 8.0°C cold-chain limit",
-                },
-            }
+            suggested_action = None
         else:
             rec_text = "All environmental sensor logs are within compliant storage parameters."
 
-    elif intent == "forecast_demand":
+    elif intent == "check_expiry":
         rec_text = (
-            "Seasonal demand analysis complete. For any projected deficit, verify supplier MOQ and lead times "
-            "before issuing purchase orders."
+            "Expiry audit complete. Review the listed batches and route any disposition decision through the established QA/pharmacist process. "
+            "This report does not authorize stock disposition."
         )
+
+    elif intent == "forecast_demand":
+        forecast = evidence.get("external_forecast")
+        if forecast and forecast.get("success"):
+            rec_text = (
+                f"External Kaggle category {forecast['category']} forecast: {forecast['forecast']:.2f} "
+                f"for {forecast['forecast_date']}. Held-out model MAE {forecast['model_mae']:.2f} "
+                f"versus previous-week baseline MAE {forecast['baseline_mae']:.2f}. "
+                "This is external pharmacy-sales data, not Arogya Pharma demand."
+            )
+        else:
+            rec_text = "Seasonal demand analysis complete. Verify any projected distributor deficit against supplier MOQ and lead times before considering purchase orders."
 
     else:
         rec_text = "Analysis complete. All pharmaceutical actions require sign-off by authorized Arogya Pharma personnel."
@@ -446,6 +505,7 @@ def run_investigation(user_query: str) -> Dict[str, Any]:
     entities = classification["entities"]
     batch_id = entities.get("batch_id")
     product_id = entities.get("product_id")
+    external_category = entities.get("external_category")
 
     # Transparent execution engine labeling
     openai_key = os.getenv("OPENAI_API_KEY")
@@ -461,10 +521,32 @@ def run_investigation(user_query: str) -> Dict[str, Any]:
         "intent": intent,
         "batch_id": batch_id,
         "product_id": product_id,
+        "external_category": external_category,
         "inventory_available": True,
         "findings": findings,
         "uncertainties": uncertainties,
     }
+
+    if intent == "compare_options" and not batch_id:
+        message = "Replacement comparison unavailable: specify a batch ID so recall, clean-stock, and purchase-order evidence can be checked."
+        findings.append(message)
+        uncertainties.append("No batch ID was provided; no recall or replacement records were queried.")
+        options_comp = {
+            "status": "insufficient_data",
+            "message": message,
+            "missing_information": ["Batch ID", "Verified recall status", "Clean-stock records", "Purchase-order evidence"],
+            "options": [],
+        }
+        evidence_gathered["options_comparison"] = options_comp
+        recommendation = generate_recommendation(user_query, evidence_gathered)
+        return {
+            "query": user_query, "engine_mode": engine_mode, "intent": intent,
+            "entities": entities, "tools_used": tools_used, "findings": findings,
+            "evidence": evidence_gathered, "uncertainties": uncertainties,
+            "options_comparison": options_comp, "recommendation": recommendation,
+            "proposed_action": None, "requires_human_approval": True,
+            "disclaimer": "Fictional prototype for Arogya Pharma Distributors. Decision support only. All simulated actions require authorization by a qualified human.",
+        }
 
     # Execute relevant tools
     if intent in ("investigate_batch", "compare_options"):
@@ -481,8 +563,10 @@ def run_investigation(user_query: str) -> Dict[str, Any]:
             b_data = trace_res["data"]
             sku = b_data.get("sku")
             evidence_gathered["sku"] = sku
-            evidence_gathered["recalled_wh_qty"] = b_data.get("total_warehouse_stock", 0)
-            evidence_gathered["recalled_disp_qty"] = b_data.get("total_dispatched_qty", 0)
+            if "total_warehouse_stock" in b_data:
+                evidence_gathered["recalled_wh_qty"] = b_data["total_warehouse_stock"]
+            if "total_dispatched_qty" in b_data:
+                evidence_gathered["recalled_disp_qty"] = b_data["total_dispatched_qty"]
             findings.append(
                 f"Batch '{target_batch}' ({b_data.get('product_name')}, {sku}): "
                 f"{b_data.get('total_warehouse_stock')} units remaining in warehouse, "
@@ -493,8 +577,10 @@ def run_investigation(user_query: str) -> Dict[str, Any]:
         tools_used.append("check_recall")
         recall_res = inv.check_recall(target_batch)
         evidence_gathered["is_recalled"] = recall_res.get("is_recalled", False)
+        evidence_gathered["recall_class"] = recall_res.get("recall_details", {}).get("recall_class")
         if recall_res.get("is_recalled"):
-            findings.append(f"CRITICAL RECALL NOTICE: Batch '{target_batch}' is actively recalled (Class I). Reason: {recall_res.get('recall_details', {}).get('reason')}")
+            recall_class = evidence_gathered["recall_class"] or "class not specified"
+            findings.append(f"CRITICAL RECALL NOTICE: Batch '{target_batch}' is actively recalled ({recall_class}). Reason: {recall_res.get('recall_details', {}).get('reason')}")
         else:
             findings.append(f"Recall check passed: Batch '{target_batch}' is not recalled.")
 
@@ -505,12 +591,12 @@ def run_investigation(user_query: str) -> Dict[str, Any]:
             evidence_gathered["chemists_count"] = cust_res.get("chemists_count", 0)
             evidence_gathered["hospitals_count"] = cust_res.get("hospitals_count", 0)
             evidence_gathered["total_customers"] = cust_res.get("total_customers_count", 0)
-            evidence_gathered["hospital_disp_qty"] = cust_res.get("hospital_dispatched_units", 140)
-            evidence_gathered["chemist_disp_qty"] = cust_res.get("chemist_dispatched_units", 500)
+            evidence_gathered["hospital_disp_qty"] = cust_res.get("hospital_dispatched_units")
+            evidence_gathered["chemist_disp_qty"] = cust_res.get("chemist_dispatched_units")
             findings.append(
                 f"Customer traceability: Dispatched to {cust_res.get('total_customers_count')} total customers "
-                f"({cust_res.get('chemists_count')} chemists: {cust_res.get('chemist_dispatched_units', 500)} units; "
-                f"{cust_res.get('hospitals_count')} hospitals: {cust_res.get('hospital_dispatched_units', 140)} units). "
+                f"({cust_res.get('chemists_count')} chemists: {cust_res.get('chemist_dispatched_units')} units; "
+                f"{cust_res.get('hospitals_count')} hospitals: {cust_res.get('hospital_dispatched_units')} units). "
                 f"Total units dispatched: {cust_res.get('total_dispatched_units')}."
             )
 
@@ -519,10 +605,10 @@ def run_investigation(user_query: str) -> Dict[str, Any]:
             clean_trace = inv.trace_batch("B2240")
             if clean_trace.get("success"):
                 evidence_gathered["clean_stock_batch"] = "B2240"
-                evidence_gathered["clean_stock_qty"] = clean_trace["data"].get("total_warehouse_stock", 400)
+                evidence_gathered["clean_stock_qty"] = clean_trace["data"].get("total_warehouse_stock")
                 findings.append(f"Identified verified clean batch 'B2240' with {evidence_gathered['clean_stock_qty']} units available in warehouse.")
 
-            gap_info = seasonal.calculate_stock_gap("SKU-AMOX-500")
+            gap_info = seasonal.calculate_stock_gap(evidence_gathered.get("sku", "SKU-AMOX-500"))
             if gap_info.get("incoming_purchase_orders"):
                 po_item = gap_info["incoming_purchase_orders"][0]
                 evidence_gathered["incoming_po_number"] = po_item["po"]
@@ -537,24 +623,60 @@ def run_investigation(user_query: str) -> Dict[str, Any]:
         excursions = env_res.get("excursions", [])
         evidence_gathered["excursions"] = excursions
         if excursions:
-            findings.append(f"EXCURSION DETECTED: {len(excursions)} event(s) recorded above the 8.0°C cold-chain limit.")
+            findings.append(f"EXCURSION DETECTED: {len(excursions)} event(s) recorded above configured storage limits.")
             for exc in excursions:
-                findings.append(f"- Location: {exc['warehouse']} ({exc['cold_room']}), Peak: {exc['peak_temp_c']}°C, Affected: {', '.join(exc.get('affected_batches', ['None']))}")
+                affected = exc.get("affected_batches") or []
+                affected_text = ", ".join(affected) if affected else "batch identification pending; no batch IDs returned"
+                findings.append(
+                    f"- Facility: {exc.get('warehouse')}; cold storage: {exc.get('cold_room')}; "
+                    f"window: {exc.get('start_time')} to {exc.get('end_time')}; peak: {exc.get('peak_temp_c')} C; "
+                    f"upper limit: {exc.get('limit_max')} C; readings above limit: {exc.get('readings_above_limit')}; "
+                    f"affected batches: {affected_text}."
+                )
         else:
             findings.append("Environmental audit: All cold rooms within 2.0°C - 8.0°C limits.")
 
     elif intent == "check_expiry":
         tools_used.append("check_expiry")
-        exp_res = inv.check_expiry(reference_date="2026-10-09")
+        exp_res = inv.check_expiry(reference_date=REFERENCE_DATE)
         evidence_gathered["expired_count"] = exp_res.get("expired_count", 0)
         evidence_gathered["near_expiry_count"] = exp_res.get("near_expiry_count", 0)
         findings.append(f"Expiry audit: {exp_res.get('expired_count')} expired batches and {exp_res.get('near_expiry_count')} near-expiry batches identified.")
+        evidence_gathered["expired_batches"] = exp_res.get("expired", [])
+        evidence_gathered["near_expiry_batches"] = exp_res.get("near_expiry", [])
+        for record in evidence_gathered["expired_batches"]:
+            findings.append(
+                f"Expired batch {record['batch']} — expiry {record['expiry_date']}; "
+                f"warehouse {record['warehouse']}; quantity {record['qty']} units."
+            )
+        for record in evidence_gathered["near_expiry_batches"]:
+            findings.append(
+                f"Near-expiry batch {record['batch']} — expiry {record['expiry_date']}; "
+                f"warehouse {record['warehouse']}; quantity {record['qty']} units."
+            )
 
     elif intent == "forecast_demand":
-        target_sku = product_id or "SKU-AMOX-500"
-        tools_used.append("forecast_seasonal_demand")
-        seas_res = seasonal.forecast_seasonal_demand(target_sku)
-        findings.append(f"Seasonal forecast for {target_sku}: Projected demand {seas_res.get('estimate')} units, Stock gap: {seas_res.get('stock_gap')} units.")
+        if external_category:
+            tools_used.append("forecast_external_weekly_sales")
+            forecast = seasonal.forecast_external_weekly_sales(external_category)
+            evidence_gathered["external_forecast"] = forecast
+            if forecast.get("success"):
+                findings.append(
+                    f"External Kaggle pharmacy sales data ({external_category}; not an Arogya Pharma SKU): "
+                    f"forecast {forecast['forecast']:.2f} for {forecast['forecast_date']}; "
+                    f"held-out MAE {forecast['model_mae']:.2f}, previous-week baseline MAE {forecast['baseline_mae']:.2f}. "
+                    f"Evaluation starts {forecast['test_start_date']}; final model refit through {forecast['final_model_train_through_date']}."
+                )
+            else:
+                findings.append(f"External Kaggle forecast unavailable: {forecast.get('message', forecast.get('status'))}.")
+        elif product_id:
+            tools_used.append("forecast_seasonal_demand")
+            seas_res = seasonal.forecast_seasonal_demand(product_id)
+            evidence_gathered["seasonal_forecast"] = seas_res
+            findings.append(f"Distributor seasonal forecast for {product_id}: {seas_res.get('estimate')} units; stock gap: {seas_res.get('stock_gap')} units.")
+        else:
+            uncertainties.append("No distributor SKU or external Kaggle category was specified.")
+            findings.append("No forecast was run: specify a distributor SKU or external Kaggle category.")
 
     elif intent == "validate_dispatch":
         tools_used.append("validate_dispatch")
@@ -566,12 +688,35 @@ def run_investigation(user_query: str) -> Dict[str, Any]:
         else:
             findings.append(f"Dispatch validation REJECTED: {val_res.get('reason')}")
 
-    # Generate options comparison
-    problem_context = {
-        "type": "recall_replacement" if evidence_gathered.get("is_recalled") else "stock_shortage",
-        "batch_id": batch_id,
+    # Replacement options apply only to an explicitly relevant investigation with a verified active recall.
+    options_comp = {
+        "status": "not_applicable",
+        "message": "Not applicable to this investigation.",
+        "options": [],
     }
-    options_comp = compare_options(problem_context, evidence_gathered)
+    if intent in ("investigate_batch", "compare_options") and evidence_gathered.get("is_recalled") is True:
+        if intent == "compare_options":
+            tools_used.append("compare_options")
+        options_comp = compare_options(
+            {"type": "recall_replacement", "batch_id": evidence_gathered.get("batch_id")},
+            evidence_gathered,
+        )
+        if intent == "compare_options":
+            evidence_gathered["options_comparison"] = options_comp
+            if options_comp.get("options"):
+                findings.insert(0, f"Replacement comparison: {options_comp.get('message')}")
+            else:
+                missing = options_comp.get("missing_information", [])
+                findings.insert(0, "Replacement comparison unavailable; missing evidence: " + (", ".join(missing) if missing else options_comp.get("message", "required evidence unavailable")) + ".")
+    elif intent == "compare_options":
+        options_comp = {
+            "status": "insufficient_data",
+            "message": "The requested batch is not confirmed as actively recalled; replacement options were not generated.",
+            "missing_information": ["Verified active recall evidence"],
+            "options": [],
+        }
+        evidence_gathered["options_comparison"] = options_comp
+        findings.insert(0, options_comp["message"])
 
     # Generate recommendation
     recommendation = generate_recommendation(user_query, evidence_gathered)

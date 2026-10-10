@@ -18,7 +18,8 @@ import pandas as pd
 
 import modules.common as common
 
-DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+PROJECT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+DEFAULT_DATA_DIR = os.path.abspath(os.environ.get("BATCHGUARD_DATA_DIR", PROJECT_DATA_DIR))
 
 
 def get_data_path(filename: str, data_dir: Optional[str] = None) -> str:
@@ -34,7 +35,7 @@ def load_inventory(data_dir: Optional[str] = None) -> Dict[str, Any]:
     warnings: List[str] = []
 
     inv_df, w1 = common.load_csv_as_dataframe(
-        os.path.join(base, "inventory.csv"),
+        common.dataset_file_path("inventory.csv", base),
         required_columns=["sku", "batch", "warehouse", "qty", "mfg_date", "expiry_date"],
     )
     prod_df, w2 = common.load_csv_as_dataframe(
@@ -201,12 +202,15 @@ def trace_batch(batch_id: str, data_dir: Optional[str] = None) -> Dict[str, Any]
         for _, r in batch_rows.iterrows():
             qty = int(r["qty"])
             total_stock += qty
-            warehouses.append({
+            warehouse_record = {
                 "warehouse": str(r["warehouse"]),
                 "qty": qty,
                 "mfg_date": str(r["mfg_date"]),
                 "expiry_date": str(r["expiry_date"]),
-            })
+            }
+            if "storage_location" in r.index and pd.notna(r["storage_location"]):
+                warehouse_record["storage_location"] = str(r["storage_location"])
+            warehouses.append(warehouse_record)
 
     # Trace dispatches with customer metadata
     dispatches = []
@@ -229,6 +233,12 @@ def trace_batch(batch_id: str, data_dir: Optional[str] = None) -> Dict[str, Any]
     # Check recall status
     recall_res = check_recall(clean_batch, data_dir)
     is_recalled = recall_res.get("is_recalled", False)
+    expiry_dates = list(dict.fromkeys(record["expiry_date"] for record in warehouses))
+    expiry_summary = (
+        expiry_dates[0] if len(expiry_dates) == 1
+        else "Multiple dates; see warehouse records" if expiry_dates
+        else "N/A"
+    )
 
     summary_data = {
         "batch_id": clean_batch,
@@ -245,7 +255,8 @@ def trace_batch(batch_id: str, data_dir: Optional[str] = None) -> Dict[str, Any]
         "dispatches_count": len(dispatches),
         "is_recalled": is_recalled,
         "location": warehouses[0]["warehouse"] if warehouses else "Dispatched",
-        "expiry_date": warehouses[0]["expiry_date"] if warehouses else "N/A",
+        "expiry_date": expiry_summary,
+        "expiry_dates": expiry_dates,
     }
 
     if is_recalled:

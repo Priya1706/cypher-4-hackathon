@@ -15,13 +15,167 @@ and supplier lead times/MOQs.
 """
 
 import os
+from math import ceil
 from datetime import datetime, date
 from typing import Any, Dict, List, Optional
 import pandas as pd
 
 import modules.common as common
 
-DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+PROJECT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+DEFAULT_DATA_DIR = os.path.abspath(os.environ.get("BATCHGUARD_DATA_DIR", PROJECT_DATA_DIR))
+# External Kaggle sales remain isolated from whichever distributor dataset is configured.
+EXTERNAL_PHARMACY_DATA_DIR = PROJECT_DATA_DIR
+EXTERNAL_PHARMACY_CATEGORIES = ("M01AB", "M01AE", "N02BA", "N02BE", "N05B", "N05C", "R03", "R06")
+OFFICIAL_PS07_DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "official_dataset"))
+
+
+def get_forecast_source() -> str:
+    """Return the optional weekly ML data source; Kaggle remains the default."""
+    return os.environ.get("BATCHGUARD_FORECAST_SOURCE", "kaggle").strip().lower()
+
+
+def forecast_weekly_experiment(
+    identifier: Optional[str] = None,
+    data_dir: Optional[str] = None,
+    source: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Route to the isolated Kaggle or official PS-07 weekly forecasting path."""
+    selected_source = (source or get_forecast_source()).strip().lower()
+    if selected_source == "official":
+        if not identifier:
+            return {"success": False, "status": "missing_identifier", "message": "Select an official PS-07 product SKU."}
+        return forecast_official_weekly_dispatches(identifier, data_dir=data_dir)
+    if selected_source == "kaggle":
+        category = identifier or EXTERNAL_PHARMACY_CATEGORIES[0]
+        return forecast_external_weekly_sales(category, data_dir=data_dir)
+    return {
+        "success": False,
+        "status": "invalid_source",
+        "message": "BATCHGUARD_FORECAST_SOURCE must be 'kaggle' or 'official'.",
+    }
+
+
+def load_official_weekly_dispatches(
+    data_dir: Optional[str] = None,
+    product_sku: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Aggregate actual PS-07 dispatch rows into observed SKU-week totals only."""
+    base = data_dir or OFFICIAL_PS07_DATA_DIR
+    path = os.path.join(base, "dispatches.csv")
+    try:
+        frame = pd.read_csv(path, encoding="utf-8-sig")
+    except (OSError, UnicodeError, ValueError, pd.errors.ParserError) as exc:
+        return {"success": False, "status": "data_error", "message": f"Could not read official dispatch data: {exc}"}
+
+    required = ["date", "sku", "qty"]
+    missing = [column for column in required if column not in frame.columns]
+    if missing:
+        return {"success": False, "status": "invalid_schema", "message": f"Official dispatch data is missing: {', '.join(missing)}."}
+
+    dates = pd.to_datetime(frame["date"], errors="coerce", format="mixed")
+    quantities = pd.to_numeric(frame["qty"], errors="coerce").replace([float("inf"), float("-inf")], float("nan"))
+    clean = pd.DataFrame({"date": dates, "sku": frame["sku"].astype(str).str.strip().str.upper(), "qty": quantities})
+    valid_mask = clean["date"].notna() & clean["qty"].notna() & clean["sku"].ne("")
+    invalid_rows = int((~valid_mask).sum())
+    clean = clean.loc[valid_mask].copy()
+    if product_sku:
+        clean = clean[clean["sku"] == str(product_sku).strip().upper()]
+    if clean.empty:
+        return {"success": False, "status": "insufficient_data", "message": "No valid official dispatch rows are available for the selected product SKU.", "invalid_rows_dropped": invalid_rows}
+
+    clean["week"] = clean["date"].dt.to_period("W-SUN").dt.end_time.dt.normalize()
+    weekly = clean.groupby(["sku", "week"], as_index=False, sort=True)["qty"].sum()
+    return {
+        "success": True,
+        "weekly": weekly,
+        "product_skus": sorted(weekly["sku"].unique().tolist()),
+        "invalid_rows_dropped": invalid_rows,
+        "date_start": clean["date"].min().date().isoformat(),
+        "date_end": clean["date"].max().date().isoformat(),
+    }
+
+
+def forecast_official_weekly_dispatches(
+    product_sku: str,
+    data_dir: Optional[str] = None,
+    n_lags: int = 4,
+    test_fraction: float = 0.2,
+) -> Dict[str, Any]:
+    """Forecast weekly dispatched quantities from synthetic PS-07 records when history permits."""
+    loaded = load_official_weekly_dispatches(data_dir=data_dir, product_sku=product_sku)
+    if not loaded.get("success"):
+        return loaded
+    if not isinstance(n_lags, int) or n_lags < 1 or not isinstance(test_fraction, (int, float)) or not 0 < test_fraction < 0.5:
+        return {"success": False, "status": "invalid_parameters", "message": "Use positive n_lags and test_fraction between 0 and 0.5."}
+
+    weekly = loaded["weekly"].sort_values("week")
+    series = weekly.set_index("week")["qty"].astype(float)
+    if len(series) > 1 and not (series.index.to_series().diff().dropna() == pd.Timedelta(days=7)).all():
+        return {
+            "success": False,
+            "status": "insufficient_data",
+            "message": "Weekly dispatch history has missing weeks; no weeks were filled or interpolated, so a regular weekly forecast was not run.",
+            "weekly_observations": len(series),
+            "invalid_rows_dropped": loaded["invalid_rows_dropped"],
+        }
+
+    lagged = pd.DataFrame({"target": series})
+    for lag in range(1, n_lags + 1):
+        lagged[f"lag_{lag}"] = series.shift(lag)
+    samples = lagged.dropna()
+    test_count = max(3, ceil(len(samples) * test_fraction))
+    train_count = len(samples) - test_count
+    if train_count < 8 or test_count < 3:
+        return {
+            "success": False,
+            "status": "insufficient_data",
+            "message": (
+                f"Only {len(series)} observed weekly SKU totals are available; this model needs at least "
+                f"{n_lags + 11} regular weeks for lag features, eight training samples, and three chronological test weeks."
+            ),
+            "weekly_observations": len(series),
+            "invalid_rows_dropped": loaded["invalid_rows_dropped"],
+        }
+
+    try:
+        from sklearn.ensemble import RandomForestRegressor
+        from sklearn.metrics import mean_absolute_error
+    except ImportError:
+        return {"success": False, "status": "dependency_unavailable", "message": "Install scikit-learn to run the official dispatch forecasting experiment."}
+
+    train, test = samples.iloc[:train_count], samples.iloc[train_count:]
+    features = [f"lag_{lag}" for lag in range(1, n_lags + 1)]
+    model = RandomForestRegressor(n_estimators=100, min_samples_leaf=2, random_state=42, n_jobs=1)
+    model.fit(train[features], train["target"])
+    predictions = model.predict(test[features])
+    baseline = test["lag_1"].to_numpy()
+    final_model = RandomForestRegressor(n_estimators=100, min_samples_leaf=2, random_state=42, n_jobs=1)
+    final_model.fit(samples[features], samples["target"])
+    latest = pd.DataFrame([{f"lag_{lag}": float(series.iloc[-lag]) for lag in range(1, n_lags + 1)}])
+    backtest = [
+        {"date": timestamp.date().isoformat(), "actual": float(actual), "model_prediction": float(prediction), "baseline_prediction": float(base)}
+        for timestamp, actual, prediction, base in zip(test.index, test["target"], predictions, baseline)
+    ]
+    return {
+        "success": True,
+        "status": "calculated",
+        "dataset_label": "Synthetic PS-07 historical dispatch activity; not validated customer demand or annual seasonality",
+        "product_sku": str(product_sku).strip().upper(),
+        "model": "Random Forest Regressor",
+        "n_lags": n_lags,
+        "forecast_date": (series.index[-1] + pd.Timedelta(days=7)).date().isoformat(),
+        "forecast": float(final_model.predict(latest[features])[0]),
+        "model_mae": float(mean_absolute_error(test["target"], predictions)),
+        "baseline_name": "Previous-week dispatches",
+        "baseline_mae": float(mean_absolute_error(test["target"], baseline)),
+        "train_end_date": train.index[-1].date().isoformat(),
+        "test_start_date": test.index[0].date().isoformat(),
+        "final_model_train_through_date": samples.index[-1].date().isoformat(),
+        "weekly_observations": len(series),
+        "backtest": backtest,
+        "limitation": "This experiment forecasts synthetic PS-07 historical dispatch activity only; dispatches are not validated customer demand, and the short history does not establish annual seasonality or real-world forecasting accuracy.",
+    }
 
 
 def load_historical_demand(data_dir: Optional[str] = None) -> pd.DataFrame:
@@ -33,6 +187,12 @@ def load_historical_demand(data_dir: Optional[str] = None) -> pd.DataFrame:
         os.path.join(base, "historical_demand.csv"),
         required_columns=["date", "warehouse", "sku", "qty"],
     )
+    if df.empty:
+        # PS-07 supplies dispatches rather than a separate historical-demand file.
+        df, _ = common.load_csv_as_dataframe(
+            os.path.join(base, "dispatches.csv"),
+            required_columns=["date", "sku", "qty"],
+        )
     if not df.empty:
         df["qty"] = pd.to_numeric(df["qty"], errors="coerce").fillna(0)
     return df
@@ -72,6 +232,140 @@ def inspect_supplementary_research(data_dir: Optional[str] = None) -> Dict[str, 
         }
     except Exception as e:
         return {"available": False, "message": f"Error reading research file: {str(e)}"}
+
+
+def forecast_external_weekly_sales(
+    category: str,
+    data_dir: Optional[str] = None,
+    n_lags: int = 4,
+    test_fraction: float = 0.2,
+) -> Dict[str, Any]:
+    """Run an isolated one-week-ahead forecasting experiment on external pharmacy sales.
+
+    Features are previous observed weekly values. The final holdout is chronological,
+    and later holdout targets are never used to predict earlier holdout weeks.
+    """
+    if category not in EXTERNAL_PHARMACY_CATEGORIES:
+        return {
+            "success": False,
+            "status": "invalid_category",
+            "message": f"Choose one of the supported external categories: {', '.join(EXTERNAL_PHARMACY_CATEGORIES)}.",
+        }
+    if not isinstance(n_lags, int) or n_lags < 1:
+        return {"success": False, "status": "invalid_parameters", "message": "n_lags must be a positive integer."}
+    if not isinstance(test_fraction, (int, float)) or not 0 < test_fraction < 0.5:
+        return {"success": False, "status": "invalid_parameters", "message": "test_fraction must be greater than 0 and less than 0.5."}
+
+    path = os.path.join(data_dir or EXTERNAL_PHARMACY_DATA_DIR, "salesweekly.csv")
+    try:
+        df = pd.read_csv(path, encoding="utf-8-sig")
+    except (OSError, UnicodeError, ValueError, pd.errors.ParserError) as exc:
+        return {"success": False, "status": "data_error", "message": f"Could not read external sales data: {exc}"}
+
+    missing_columns = [column for column in ("datum", category) if column not in df.columns]
+    if missing_columns:
+        return {
+            "success": False,
+            "status": "invalid_schema",
+            "message": f"External sales data is missing required column(s): {', '.join(missing_columns)}.",
+        }
+
+    try:
+        from sklearn.ensemble import RandomForestRegressor
+        from sklearn.metrics import mean_absolute_error
+    except ImportError:
+        return {
+            "success": False,
+            "status": "dependency_unavailable",
+            "message": "Install scikit-learn to run the external sales forecasting experiment.",
+        }
+
+    dates = pd.to_datetime(df["datum"], errors="coerce", format="mixed")
+    sales = pd.to_numeric(df[category], errors="coerce").replace([float("inf"), float("-inf")], float("nan"))
+    invalid_dates = int(dates.isna().sum())
+    invalid_sales = int((dates.notna() & sales.isna()).sum())
+    clean = pd.DataFrame({"date": dates, "sales": sales}).dropna(subset=["date", "sales"])
+    if clean.empty:
+        return {
+            "success": False,
+            "status": "insufficient_data",
+            "message": "No rows with both a valid date and numeric sales value remain after cleaning.",
+            "data_quality": {"invalid_dates_dropped": invalid_dates, "missing_or_invalid_sales_dropped": invalid_sales},
+        }
+
+    # A duplicate date is represented once using the mean; then sort before creating lags.
+    series = clean.groupby("date")["sales"].mean().sort_index()
+    lagged = pd.DataFrame({"target": series})
+    for lag in range(1, n_lags + 1):
+        lagged[f"lag_{lag}"] = series.shift(lag)
+    samples = lagged.dropna()
+
+    test_count = max(3, ceil(len(samples) * test_fraction))
+    train_count = len(samples) - test_count
+    if train_count < 8 or test_count < 3:
+        return {
+            "success": False,
+            "status": "insufficient_data",
+            "message": "Not enough clean weekly history for lag features and a useful chronological train/test split.",
+            "data_quality": {"invalid_dates_dropped": invalid_dates, "missing_or_invalid_sales_dropped": invalid_sales},
+        }
+
+    train = samples.iloc[:train_count]
+    test = samples.iloc[train_count:]
+    feature_columns = [f"lag_{lag}" for lag in range(1, n_lags + 1)]
+    model = RandomForestRegressor(n_estimators=100, min_samples_leaf=2, random_state=42, n_jobs=1)
+    model.fit(train[feature_columns], train["target"])
+    model_predictions = model.predict(test[feature_columns])
+    baseline_predictions = test["lag_1"].to_numpy()
+    model_mae = float(mean_absolute_error(test["target"], model_predictions))
+    baseline_mae = float(mean_absolute_error(test["target"], baseline_predictions))
+
+    # Preserve the chronological holdout above for evaluation, then refit a
+    # separate final model on every observed lag/target pair for deployment.
+    final_model = RandomForestRegressor(n_estimators=100, min_samples_leaf=2, random_state=42, n_jobs=1)
+    final_model.fit(samples[feature_columns], samples["target"])
+    latest_features = pd.DataFrame(
+        [{f"lag_{lag}": float(series.iloc[-lag]) for lag in range(1, n_lags + 1)}]
+    )
+    next_week_forecast = float(final_model.predict(latest_features[feature_columns])[0])
+    backtest = [
+        {
+            "date": timestamp.date().isoformat(),
+            "actual": float(actual),
+            "model_prediction": float(prediction),
+            "baseline_prediction": float(baseline),
+        }
+        for timestamp, actual, prediction, baseline in zip(
+            test.index, test["target"], model_predictions, baseline_predictions
+        )
+    ]
+
+    return {
+        "success": True,
+        "status": "calculated",
+        "dataset_label": "External Kaggle pharmacy sales data; not Arogya Pharma demand",
+        "category": category,
+        "model": "Random Forest Regressor",
+        "n_lags": n_lags,
+        "forecast_date": (series.index[-1] + pd.Timedelta(weeks=1)).date().isoformat(),
+        "forecast": next_week_forecast,
+        "model_mae": model_mae,
+        "baseline_name": "Previous-week sales",
+        "baseline_mae": baseline_mae,
+        "train_weeks": int(len(train)),
+        "test_weeks": int(len(test)),
+        "train_end_date": train.index[-1].date().isoformat(),
+        "test_start_date": test.index[0].date().isoformat(),
+        "final_model_train_through_date": samples.index[-1].date().isoformat(),
+        "backtest": backtest,
+        "backtest_note": "Chronological one-week-ahead holdout; prior observed values are used as lags for later holdout predictions.",
+        "data_quality": {
+            "invalid_dates_dropped": invalid_dates,
+            "missing_or_invalid_sales_dropped": invalid_sales,
+            "duplicate_dates_averaged": int(len(clean) - clean["date"].nunique()),
+        },
+        "limitation": "This experiment measures held-out performance on this external dataset only; it does not establish forecasting accuracy for Arogya Pharma or real-world demand.",
+    }
 
 
 def calculate_seasonal_demand(
@@ -178,7 +472,7 @@ def calculate_stock_gap(
     projected_demand = demand_res.get("estimate", 0)
 
     # 2. Get inventory and exclude recalled/expired
-    inv_df, _ = common.load_csv_as_dataframe(os.path.join(base, "inventory.csv"))
+    inv_df, _ = common.load_csv_as_dataframe(common.dataset_file_path("inventory.csv", base))
     recall_df, _ = common.load_csv_as_dataframe(os.path.join(base, "recalls.csv"))
     po_df, _ = common.load_csv_as_dataframe(os.path.join(base, "purchase_orders.csv"))
     supp_df, _ = common.load_csv_as_dataframe(os.path.join(base, "suppliers.csv"))

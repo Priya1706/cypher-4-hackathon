@@ -1,0 +1,76 @@
+manufacturer,sku,lead_time_days,moq,return_window_days
+Dr Reddys,PH-001,10,200,30
+Torrent,PH-002,5,100,60
+Mankind,PH-003,10,500,45
+Cipla,PH-004,5,200,60
+Lupin,PH-005,5,500,45
+Glenmark,PH-006,10,100,30
+Torrent,PH-007,10,500,60
+Zydus,PH-008,5,500,60
+Glenmark,PH-009,14,50,45
+Biocon,PH-010,10,50,45
+Sun Pharma,PH-011,10,100,30
+Lupin,PH-012,7,500,30
+Alkem,PH-013,10,100,60
+Dr Reddys,PH-014,5,500,45
+Glenmark,PH-015,14,100,60
+Sun Pharma,PH-016,5,100,60
+Zydus,PH-017,14,500,45
+Alkem,PH-018,14,500,45
+Lupin,PH-019,5,100,60
+Sun Pharma,PH-020,7,200,30
+Zydus,PH-021,10,50,30
+Sun Pharma,PH-022,5,500,30
+Dr Reddys,PH-023,7,50,60
+Biocon,PH-024,7,100,30
+Zydus,PH-025,5,100,60
+Glenmark,PH-026,7,500,60
+Biocon,PH-027,14,500,60
+Biocon,PH-028,7,100,30
+Cipla,PH-029,7,200,45
+Lupin,PH-030,5,100,30
+Torrent,PH-031,10,50,30
+Biocon,PH-032,14,500,60
+Dr Reddys,PH-033,5,200,30
+Torrent,PH-034,10,50,45
+Dr Reddys,PH-035,7,50,30
+Sun Pharma,PH-036,10,500,45
+Glenmark,PH-037,5,100,60
+Alkem,PH-038,5,100,60
+Mankind,PH-039,5,50,30
+Lupin,PH-040,7,100,60
+Cipla,PH-041,10,50,30
+Zydus,PH-042,14,50,60
+Mankind,PH-043,14,500,30
+Lupin,PH-044,7,200,30
+Zydus,PH-045,10,500,45
+Lupin,PH-046,10,200,30
+Biocon,PH-047,10,200,30
+Torrent,PH-048,7,50,60
+Torrent,PH-049,10,100,45
+Dr Reddys,PH-050,7,50,45
+Lupin,PH-051,10,200,60
+Mankind,PH-052,5,500,60
+Zydus,PH-053,7,500,45
+Torrent,PH-054,5,100,45
+Alkem,PH-055,7,500,60
+Sun Pharma,PH-056,7,200,45
+Zydus,PH-057,5,50,45
+Torrent,PH-058,14,50,30
+Dr Reddys,PH-059,7,200,60
+Alkem,PH-060,14,500,45
+Zydus,PH-061,10,500,45
+Biocon,PH-062,5,500,30
+Glenmark,PH-063,7,100,30
+Lupin,PH-064,14,50,30
+Sun Pharma,PH-065,14,50,45
+Alkem,PH-066,7,200,45
+Lupin,PH-067,5,500,60
+Dr Reddys,PH-068,10,50,30
+Torrent,PH-069,5,500,30
+Biocon,PH-070,14,50,45
+Cipla,PH-071,10,50,30
+Zydus,PH-072,10,200,30
+Alkem,PH-073,14,500,60
+Mankind,PH-074,7,50,30
+Torrent,PH-075,10,50,30

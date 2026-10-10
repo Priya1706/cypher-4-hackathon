@@ -100,6 +100,17 @@ python -m streamlit run app.py
 ```
 Open **`http://localhost:8501`** in your browser.
 
+### Optional: Run against the official PS-07 snapshot
+The supplied files are in the repository-root `official_dataset/` directory. To use them without replacing anything under `data/`, set the dataset directory before launching:
+```powershell
+$env:BATCHGUARD_DATA_DIR = "official_dataset"
+$env:BATCHGUARD_AS_OF_DATE = "2026-11-16"
+python -m streamlit run app.py
+```
+The snapshot README says its data runs through 2026-11-16; those source dates are retained as supplied. The second setting aligns expiry review with the snapshot date. The dashboard and agent read the recall class and SKU from the loaded records. The external Kaggle weekly sales forecast continues to read only `data/salesweekly.csv` and is not joined to distributor SKUs or batches.
+
+This PS-07 snapshot does not match the legacy scenario figures in Section 3: its B2231 record is SKU `PH-004` under a Class II recall, and its 640 dispatched units split into 590 chemist units and 50 hospital units (the legacy summary says Class I and 500/140). There is no purchase order for `PH-004`, so replacement comparison remains unavailable unless verified matching supply records exist.
+
 ---
 
 ## 5. Application Feature Walkthrough

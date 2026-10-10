@@ -7,7 +7,6 @@ Author: Lead Integration & AI Agent Architecture (Team DevSync)
 """
 
 import os
-from datetime import datetime
 import streamlit as st
 import pandas as pd
 
@@ -19,6 +18,27 @@ import modules.seasonal_demand as seasonal
 import modules.actions as actions
 import agent
 
+
+def _set_investigation_prompt(prompt):
+    st.session_state["ai_query_input"] = prompt
+    st.session_state["ai_investigation_report"] = None
+
+
+def _clear_investigation_report():
+    st.session_state["ai_investigation_report"] = None
+
+
+# Official PS-07 data is opt-in so the existing project datasets are never replaced.
+if os.environ.get("BATCHGUARD_DATA_DIR"):
+    if not os.path.isdir(inv.DEFAULT_DATA_DIR):
+        raise RuntimeError(f"BATCHGUARD_DATA_DIR does not exist: {inv.DEFAULT_DATA_DIR}")
+    for data_module in (inv, env, seasonal):
+        data_module.DEFAULT_DATA_DIR = inv.DEFAULT_DATA_DIR
+
+OFFICIAL_DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "official_dataset"))
+USING_OFFICIAL_DATA = os.path.normcase(inv.DEFAULT_DATA_DIR) == os.path.normcase(OFFICIAL_DATA_DIR)
+REFERENCE_DATE = os.environ.get("BATCHGUARD_AS_OF_DATE", "2026-10-09")
+
 # --- Streamlit Page Configuration ---
 st.set_page_config(
     page_title="BatchGuard AI | Arogya Pharma",
@@ -26,6 +46,11 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+if "ai_query_input" not in st.session_state:
+    st.session_state["ai_query_input"] = "Investigate batch B2231 and recommend the next steps."
+if "ai_investigation_report" not in st.session_state:
+    st.session_state["ai_investigation_report"] = None
 
 st.markdown(
     """
@@ -236,7 +261,7 @@ st.markdown(
         <p>Pharmaceutical supply-chain control tower &middot; Arogya Pharma</p>
       </div>
     </header>
-    <p class="safety-note">Decision support only. Actions are simulated and require qualified QA / QP approval; no physical dispatches or financial orders are executed.</p>""",
+    <p class="safety-note">Decision support only. Actions and review decisions are simulated; pharmacist identity is not authenticated. No real dispatches, quarantines, notifications, or purchase orders are executed.</p>""",
     unsafe_allow_html=True,
 )
 
@@ -261,11 +286,11 @@ section = st.sidebar.radio(
 )
 
 st.sidebar.divider()
-st.sidebar.subheader("Authorized reviewer")
+st.sidebar.subheader("Reviewer label (unverified)")
 reviewer_name = st.sidebar.text_input(
-    "QA / QP identity",
-    value="Dr. R. Sharma (Qualified Person)",
-    help="Identifies the authorized officer signing off on simulated actions.",
+    "Reviewer name (unverified)",
+    value="Unverified reviewer",
+    help="Display label only. This prototype does not authenticate pharmacist identity or credentials.",
 )
 
 
@@ -275,21 +300,30 @@ reviewer_name = st.sidebar.text_input(
 if section == "Overview":
     st.subheader("Operations overview")
     st.caption("Live inventory, recall exposure, and replenishment planning")
+    if USING_OFFICIAL_DATA:
+        st.caption(
+            "Official PS-07 synthetic dataset loaded from official_dataset. Source dates are preserved; "
+            "its README specifies a snapshot date of 2026-11-16. Set BATCHGUARD_AS_OF_DATE=2026-11-16 "
+            "for expiry review aligned with that snapshot."
+        )
 
     inv_data = inv.load_inventory()
     inv_df = inv_data.get("inventory", pd.DataFrame())
     prod_df = inv_data.get("products", pd.DataFrame())
     pending_actions = actions.list_pending_actions()
     pending_count = len(pending_actions)
-    expiry_info = inv.check_expiry(reference_date="2026-10-09", near_expiry_days=30)
+    expiry_info = inv.check_expiry(reference_date=REFERENCE_DATE, near_expiry_days=30)
     env_info = env.check_temperature_breach(min_limit=2.0, max_limit=8.0)
     recall_df, _ = common.load_csv_as_dataframe(
-        os.path.join(os.path.dirname(__file__), "data", "recalls.csv")
+        os.path.join(inv.DEFAULT_DATA_DIR, "recalls.csv")
     )
     recalled_trace = inv.trace_batch("B2231")
+    dashboard_recall = inv.check_recall("B2231")
+    dashboard_recall_class = dashboard_recall.get("recall_details", {}).get("recall_class", "unavailable")
     affected_customers = inv.get_affected_customers("B2231")
     clean_trace = inv.trace_batch("B2240")
-    stock_gap = seasonal.calculate_stock_gap("SKU-AMOX-500")
+    dashboard_sku = recalled_trace.get("data", {}).get("sku", "SKU-AMOX-500")
+    stock_gap = seasonal.calculate_stock_gap(dashboard_sku)
 
     comparison = None
     incoming_pos = stock_gap.get("incoming_purchase_orders", [])
@@ -308,6 +342,7 @@ if section == "Overview":
             {
                 "inventory_available": True,
                 "sku": recalled_trace["data"].get("sku"),
+                "recall_class": dashboard_recall_class,
                 "recalled_wh_qty": recalled_trace["data"]["total_warehouse_stock"],
                 "recalled_disp_qty": recalled_trace["data"]["total_dispatched_qty"],
                 "hospital_disp_qty": affected_customers["hospital_dispatched_units"],
@@ -339,13 +374,13 @@ if section == "Overview":
     if pending_count > 0:
         st.warning(
             f"{pending_count} simulated action(s) are awaiting authorized review.",
-            icon="!",
+            icon="⚠️",
         )
 
     st.markdown("#### Recall status")
     if recalled_trace.get("success") and recalled_trace["data"].get("is_recalled"):
         st.warning(
-            f"**Active Class I recall · B2231** — {recalled_units} units remain on hand; "
+            f"**Active {dashboard_recall_class} recall · B2231** — {recalled_units} units remain on hand; "
             f"{dispatched_units} dispatched units across "
             f"{affected_customers.get('total_customers_count', '—')} customers require traceability. "
             f"Total exposure: **{recalled_units + dispatched_units} units**.",
@@ -459,7 +494,7 @@ if section == "Overview":
     with st.expander("Warehouse inventory records"):
         if not inv_df.empty and not prod_df.empty:
             merged_inv = inv_df.merge(prod_df, on="sku", how="left")
-            display_cols = ["sku", "brand", "batch", "warehouse", "qty", "storage", "expiry_date", "critical_drug"]
+            display_cols = ["sku", "brand", "batch", "warehouse", "storage_location", "qty", "storage", "expiry_date", "critical_drug"]
             present_cols = [c for c in display_cols if c in merged_inv.columns]
             st.dataframe(merged_inv[present_cols], use_container_width=True, hide_index=True)
         else:
@@ -472,15 +507,21 @@ if section == "Overview":
 if section == "Batch Traceability":
     st.subheader("Batch traceability")
     st.caption("Review recall status, warehouse stock, and customer dispatch records.")
+    trace_inventory_df = inv.load_inventory().get("inventory", pd.DataFrame())
 
     # Batch selection presets
     col_sel, col_manual = st.columns([1, 2])
     with col_sel:
-        preset_choice = st.selectbox(
-            "Select Scenario Batch",
-            ["B2231 (Recalled Amoxicillin)", "B2240 (Clean Amoxicillin)", "B1092 (Cold-Chain Insulin)", "B3011 (Near-Expiry Paracetamol)", "B8801 (Expired Rabies Vax)"],
-        )
-        selected_batch = preset_choice.split()[0]
+        if USING_OFFICIAL_DATA:
+            batch_choices = sorted(trace_inventory_df["batch"].astype(str).unique()) if "batch" in trace_inventory_df else []
+            default_batch = batch_choices.index("B2231") if "B2231" in batch_choices else 0
+            selected_batch = st.selectbox("Select batch", batch_choices, index=default_batch)
+        else:
+            preset_choice = st.selectbox(
+                "Select Scenario Batch",
+                ["B2231 (Recalled Amoxicillin)", "B2240 (Clean Amoxicillin)", "B1092 (Cold-Chain Insulin)", "B3011 (Near-Expiry Paracetamol)", "B8801 (Expired Rabies Vax)"],
+            )
+            selected_batch = preset_choice.split()[0]
     with col_manual:
         search_batch_input = st.text_input("Or Enter Custom Batch ID", value=selected_batch)
 
@@ -606,18 +647,19 @@ if section == "Environmental Risks":
                 st.write("")
                 btn_key = f"stage_exc_{exc.get('warehouse')}_{exc.get('cold_room')}"
                 if st.button("Stage QA Quarantine Action for Excursion Stock", key=btn_key):
-                    new_action = actions.create_action(
-                        action_type="quarantine_excursion_stock",
-                        details={
-                            "warehouse": exc.get("warehouse"),
-                            "cold_room": exc.get("cold_room"),
-                            "peak_temp": exc.get("peak_temp_c"),
-                            "affected_batches": affected_list,
-                            "reason": "Cold chain breached (peak temp > 8.0°C). Requires QA stability clearance.",
-                        },
-                    )
-                    st.success(f"Simulated action `{new_action['action_id']}` staged for human review!")
-                    st.rerun()
+                    staged = actions.stage_excursion_review(exc)
+                    if staged.get("status") == "created":
+                        st.success(
+                            f"Simulated action {staged['action']['action_id']} saved and staged for qualified human review."
+                        )
+                    elif staged.get("status") == "duplicate":
+                        st.info(
+                            f"This excursion already has a saved review action: {staged['action']['action_id']}."
+                        )
+                    else:
+                        st.error(
+                            f"Could not stage the excursion review action: {staged.get('message', 'Unknown save error.')}"
+                        )
 
     else:
         st.success("All cold-chain telemetry is within the configured range.")
@@ -652,9 +694,13 @@ if section == "Seasonal Demand":
 
     col_prod, col_season_btn = st.columns([3, 1])
     with col_prod:
+        seasonal_products = inv.load_inventory().get("products", pd.DataFrame())
+        sku_choices = sorted(seasonal_products["sku"].astype(str).unique()) if "sku" in seasonal_products else []
+        default_sku = "SKU-AMOX-500" if "SKU-AMOX-500" in sku_choices else (sku_choices[0] if sku_choices else "SKU-AMOX-500")
         selected_sku = st.selectbox(
             "Select Product Identifier",
-            ["SKU-AMOX-500", "SKU-PARA-650", "SKU-INS-REG", "SKU-AZI-250", "SKU-RAB-VAX"],
+            sku_choices or ["SKU-AMOX-500", "SKU-PARA-650", "SKU-INS-REG", "SKU-AZI-250", "SKU-RAB-VAX"],
+            index=(sku_choices.index(default_sku) if sku_choices else 0),
         )
     with col_season_btn:
         st.write("")
@@ -719,6 +765,103 @@ if section == "Seasonal Demand":
             else:
                 st.caption(research_info.get("message", "Supplementary research file is not loaded."))
 
+        st.divider()
+        forecast_labels = {
+            "kaggle": "ML Demonstration — Kaggle Sales Data",
+            "official": "Official Data — PS-07 Dispatches",
+        }
+        configured_source = seasonal.get_forecast_source()
+        if configured_source not in forecast_labels:
+            st.warning("Invalid BATCHGUARD_FORECAST_SOURCE; defaulting this page to Kaggle.")
+            configured_source = "kaggle"
+        forecast_source = st.selectbox(
+            "Select forecasting experiment",
+            options=("kaggle", "official"),
+            index=("kaggle", "official").index(configured_source),
+            format_func=lambda source: forecast_labels[source],
+            key="seasonal_forecast_source_selector",
+        )
+        if forecast_source == "official":
+            st.markdown("#### Official PS-07 weekly dispatch experiment")
+            st.caption(
+                "Synthetic PS-07 dispatch activity from official_dataset/dispatches.csv. This is not validated customer demand "
+                "or annual seasonality. Set BATCHGUARD_FORECAST_SOURCE=kaggle or remove the variable to restore the Kaggle experiment."
+            )
+            official_dispatches = seasonal.load_official_weekly_dispatches()
+            official_skus = official_dispatches.get("product_skus", [])
+            if official_skus:
+                official_sku = st.selectbox("Official PS-07 product SKU", official_skus, key="official_dispatch_forecast_sku")
+                official_forecast = seasonal.forecast_weekly_experiment(official_sku, source=forecast_source)
+                if official_forecast.get("success"):
+                    st.caption(
+                        f"Observed weekly dispatches by SKU; evaluation training cutoff: {official_forecast['train_end_date']}; "
+                        f"held-out evaluation starts: {official_forecast['test_start_date']}; final model refit through: "
+                        f"{official_forecast['final_model_train_through_date']}."
+                    )
+                    official_cols = st.columns(3)
+                    official_cols[0].metric(f"{official_sku} dispatch forecast - {official_forecast['forecast_date']}", f"{official_forecast['forecast']:.2f}")
+                    official_cols[1].metric("Held-out model MAE", f"{official_forecast['model_mae']:.2f}")
+                    official_cols[2].metric(f"Baseline MAE - {official_forecast['baseline_name']}", f"{official_forecast['baseline_mae']:.2f}")
+                    official_chart = pd.DataFrame(official_forecast["backtest"]).set_index("date")
+                    official_chart.index = pd.to_datetime(official_chart.index)
+                    official_chart = official_chart.rename(columns={"actual": "Observed dispatches", "model_prediction": "Random Forest", "baseline_prediction": "Previous-week baseline"})
+                    st.line_chart(official_chart)
+                    st.caption(official_forecast["limitation"])
+                else:
+                    st.info(official_forecast.get("message", "Official PS-07 dispatch forecast is unavailable."))
+            else:
+                st.info(official_dispatches.get("message", "No official PS-07 dispatch products are available."))
+        elif forecast_source == "kaggle":
+            st.markdown("#### External pharmacy-sales forecasting experiment")
+            st.caption(
+                "Kaggle weekly pharmacy sales data (2014 to 2019), separate from Arogya Pharma's fictional distributor records. "
+                "These category codes do not map directly to BatchGuard SKUs or batches. Results do not establish real-world forecasting accuracy."
+            )
+            external_category = st.selectbox(
+                "External medicine category",
+                seasonal.EXTERNAL_PHARMACY_CATEGORIES,
+                key="external_weekly_sales_category",
+            )
+            external_forecast = seasonal.forecast_weekly_experiment(external_category, source=forecast_source)
+            if external_forecast.get("success"):
+                st.caption(
+                    f"{external_forecast['model']} using the previous {external_forecast['n_lags']} observed weeks. "
+                    f"Evaluation training cutoff: {external_forecast['train_end_date']}; "
+                    f"held-out evaluation starts: {external_forecast['test_start_date']}. "
+                    f"Final forecast model refit through latest available observation: "
+                    f"{external_forecast['final_model_train_through_date']}."
+                )
+                forecast_cols = st.columns(3)
+                forecast_cols[0].metric(
+                    f"{external_category} forecast - {external_forecast['forecast_date']}",
+                    f"{external_forecast['forecast']:.2f}",
+                )
+                forecast_cols[1].metric("Held-out model MAE", f"{external_forecast['model_mae']:.2f}")
+                forecast_cols[2].metric(
+                    f"Baseline MAE - {external_forecast['baseline_name']}",
+                    f"{external_forecast['baseline_mae']:.2f}",
+                )
+                st.caption(external_forecast["backtest_note"])
+                backtest_chart = pd.DataFrame(external_forecast["backtest"]).set_index("date")
+                backtest_chart.index = pd.to_datetime(backtest_chart.index)
+                backtest_chart = backtest_chart.rename(columns={
+                    "actual": "Observed sales",
+                    "model_prediction": "Random Forest",
+                    "baseline_prediction": "Previous-week baseline",
+                })
+                st.markdown("**Held-out weeks: observed sales vs model and baseline**")
+                st.line_chart(backtest_chart)
+                st.caption(external_forecast["limitation"])
+                st.caption(
+                    "Data cleaning: "
+                    f"{external_forecast['data_quality']['invalid_dates_dropped']} invalid date(s) and "
+                    f"{external_forecast['data_quality']['missing_or_invalid_sales_dropped']} missing or invalid sales value(s) excluded."
+                )
+            else:
+                st.warning(external_forecast.get("message", "External weekly sales forecast is unavailable."))
+        else:
+            st.error("Invalid BATCHGUARD_FORECAST_SOURCE. Choose 'kaggle' or 'official'.")
+
 
 # ==============================================================================
 # TAB 5: AI INVESTIGATION PANEL
@@ -730,25 +873,39 @@ if section == "AI Investigation":
     # Quick prompt presets
     st.markdown("**Suggested investigations**")
     prompt_cols = st.columns(4)
-    active_prompt = None
-    if prompt_cols[0].button("Investigate batch B2231"):
-        active_prompt = "Investigate batch B2231 and recommend the next steps."
-    if prompt_cols[1].button("Check cold-chain excursions"):
-        active_prompt = "Which batches have possible temperature excursions?"
-    if prompt_cols[2].button("Forecast seasonal demand"):
-        active_prompt = "What stock might run short during the next seasonal demand period for SKU-AMOX-500?"
-    if prompt_cols[3].button("Compare replacement options"):
-        active_prompt = "Compare replacement options for recalled batch B2231"
+    prompt_cols[0].button(
+        "Investigate batch B2231",
+        on_click=_set_investigation_prompt,
+        args=("Investigate batch B2231 and recommend the next steps.",),
+    )
+    prompt_cols[1].button(
+        "Check cold-chain excursions",
+        on_click=_set_investigation_prompt,
+        args=("Which batches have possible temperature excursions?",),
+    )
+    prompt_cols[2].button(
+        "Forecast seasonal demand",
+        on_click=_set_investigation_prompt,
+        args=("Forecast external Kaggle weekly pharmacy sales for category M01AB.",),
+    )
+    prompt_cols[3].button(
+        "Compare replacement options",
+        on_click=_set_investigation_prompt,
+        args=("Compare replacement options for recalled batch B2231",),
+    )
 
     query_input = st.text_input(
         "Enter your query for the agent:",
-        value=active_prompt if active_prompt else "Investigate batch B2231 and recommend the next steps.",
+        key="ai_query_input",
+        on_change=_clear_investigation_report,
     )
 
     if st.button("Run Investigation", type="primary"):
         with st.spinner("Executing agent investigation, querying live tools, and comparing options..."):
-            investigation = agent.run_investigation(query_input)
+            st.session_state["ai_investigation_report"] = agent.run_investigation(query_input)
 
+    investigation = st.session_state.get("ai_investigation_report")
+    if investigation:
         st.divider()
         st.markdown("### Investigation report")
         engine_label = investigation["engine_mode"]
@@ -764,6 +921,20 @@ if section == "AI Investigation":
             for f in investigation["findings"]:
                 st.markdown(f"- {f}")
 
+        if investigation.get("intent") == "check_expiry":
+            expiry_evidence = investigation.get("evidence", {})
+            expired_records = expiry_evidence.get("expired_batches", [])
+            near_expiry_records = expiry_evidence.get("near_expiry_batches", [])
+            st.markdown("#### Expiry records")
+            if expired_records:
+                st.markdown("**Expired batches**")
+                st.dataframe(pd.DataFrame(expired_records), use_container_width=True, hide_index=True)
+            if near_expiry_records:
+                st.markdown("**Near-expiry batches**")
+                st.dataframe(pd.DataFrame(near_expiry_records), use_container_width=True, hide_index=True)
+            if not expired_records and not near_expiry_records:
+                st.info("No expired or near-expiry batch records were returned by the expiry check.")
+
         if investigation["uncertainties"]:
             with st.expander("Uncertainties and missing data"):
                 for uncertainty in investigation["uncertainties"]:
@@ -773,7 +944,9 @@ if section == "AI Investigation":
         comp = investigation.get("options_comparison", {})
         st.divider()
         st.markdown("#### Response options")
-        if comp.get("options"):
+        if comp.get("status") == "not_applicable":
+            st.info(comp.get("message", "Not applicable to this investigation."))
+        elif comp.get("options"):
             st.caption(comp.get("recommendation_summary", ""))
             for opt in comp["options"]:
                 with st.expander(opt.get("title", "Response option")):
@@ -794,7 +967,7 @@ if section == "AI Investigation":
         with st.container(border=True):
             st.markdown(rec.get("summary") or "No recommendation was returned.")
             if investigation.get("requires_human_approval"):
-                st.caption("Simulated action only · qualified human approval required.")
+                st.caption("Simulated review; pharmacist identity is not authenticated.")
 
         # Proposed Simulated Action
         proposed = investigation.get("proposed_action")
@@ -825,7 +998,8 @@ if section == "AI Investigation":
 # ==============================================================================
 if section == "Action Review":
     st.subheader("Action review")
-    st.caption("Pending simulated actions require an explicit decision from the authorized QA / QP reviewer.")
+    st.caption("Simulated review; pharmacist identity is not authenticated.")
+    st.caption("Qualified human/QA/pharmacist review is required for excursion actions. This prototype cannot perform dispatches, quarantine stock, issue notifications, or execute purchase orders.")
 
     pending_list = actions.list_pending_actions()
 
@@ -867,8 +1041,9 @@ if section == "Action Review":
                         st.json(details)
 
                 with col_decide:
-                    st.markdown("#### Human approval required")
-                    st.caption(f"Reviewer: **{reviewer_name}**")
+                    st.markdown("#### Simulated review decision")
+                    st.caption(f"Reviewer label (unverified): **{reviewer_name}**")
+                    st.caption(act.get("review_status_note", "Simulated review; pharmacist identity is not authenticated."))
 
                     btn_c1, btn_c2 = st.columns(2)
                     with btn_c1:
@@ -877,7 +1052,7 @@ if section == "Action Review":
                             if res.get("status") == "error":
                                 st.error(res.get("message"))
                             else:
-                                st.success(f"Action {act_id} APPROVED.")
+                                st.success(f"Simulated action {act_id} marked approved; pharmacist identity was not authenticated.")
                                 st.rerun()
 
                     with btn_c2:
@@ -886,7 +1061,7 @@ if section == "Action Review":
                             if res.get("status") == "error":
                                 st.error(res.get("message"))
                             else:
-                                st.warning(f"Action {act_id} REJECTED.")
+                                st.warning(f"Simulated action {act_id} marked rejected; no real-world action was executed.")
                                 st.rerun()
 
     # Complete Audit Trail
@@ -901,7 +1076,8 @@ if section == "Action Review":
                 "Action Type": a.get("action_type"),
                 "Status": a.get("status"),
                 "Created At": a.get("created_at"),
-                "Reviewer": a.get("reviewer") or "—",
+                "Reviewer label (unverified)": a.get("reviewer") or "—",
+                "Review authentication": a.get("review_status_note", "Simulated review; pharmacist identity is not authenticated."),
                 "Reviewed At": a.get("reviewed_at") or "—",
             })
         st.dataframe(pd.DataFrame(audit_records), use_container_width=True)

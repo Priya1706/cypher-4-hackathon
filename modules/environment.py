@@ -22,7 +22,8 @@ import pandas as pd
 
 import modules.common as common
 
-DEFAULT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+PROJECT_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+DEFAULT_DATA_DIR = os.path.abspath(os.environ.get("BATCHGUARD_DATA_DIR", PROJECT_DATA_DIR))
 
 # Illustrative pharmaceutical storage specifications
 STORAGE_LIMITS = {
@@ -60,7 +61,7 @@ def find_affected_batches(
     Only cold-chain products are flagged for cold-room excursions.
     """
     base = data_dir or DEFAULT_DATA_DIR
-    inv_df, _ = common.load_csv_as_dataframe(os.path.join(base, "inventory.csv"))
+    inv_df, _ = common.load_csv_as_dataframe(common.dataset_file_path("inventory.csv", base))
     prod_df, _ = common.load_csv_as_dataframe(os.path.join(base, "products.csv"))
 
     if inv_df.empty or prod_df.empty:
@@ -157,7 +158,7 @@ def check_temperature_breach(
         min_temp = float(sorted_grp["temp_c"].min())
         start_ts = str(sorted_grp["timestamp"].iloc[0])
         end_ts = str(sorted_grp["timestamp"].iloc[-1])
-        readings_count = len(sorted_grp)
+        readings_count = int((sorted_grp["temp_c"] > max_limit).sum())
 
         # Cross-reference inventory batches located in this warehouse
         affected_info = find_affected_batches(wh, start_ts, end_ts, data_dir)

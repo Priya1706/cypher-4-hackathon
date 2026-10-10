@@ -1,0 +1,3 @@
+date,sku,batches,reason,recall_class
+2026-11-16,PH-004,B2231,Dissolution test failure (OOS),Class II
+2026-10-07,PH-028,B0999,Label misprint,Class III

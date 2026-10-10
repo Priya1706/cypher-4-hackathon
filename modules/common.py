@@ -16,6 +16,16 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 
+def dataset_file_path(filename: str, data_dir: str) -> str:
+    """Resolve known official PS-07 filename differences without changing source files."""
+    path = os.path.join(data_dir, filename)
+    if filename == "inventory.csv" and not os.path.exists(path):
+        official_path = os.path.join(data_dir, "batch_inventory.csv")
+        if os.path.exists(official_path):
+            return official_path
+    return path
+
+
 def make_result(
     status: str,
     data: Any = None,

@@ -1,0 +1,31 @@
+po,manufacturer,sku,qty,expected_date,status
+PO-601,Mankind,PH-074,200,2026-11-24,Confirmed
+PO-602,Lupin,PH-030,1000,2026-10-31,Received
+PO-603,Torrent,PH-054,1000,2026-11-01,Received
+PO-604,Zydus,PH-008,200,2026-11-18,Confirmed
+PO-605,Alkem,PH-038,500,2026-11-18,Confirmed
+PO-606,Torrent,PH-002,500,2026-11-21,Confirmed
+PO-607,Zydus,PH-053,500,2026-11-24,Confirmed
+PO-608,Torrent,PH-049,1000,2026-11-27,Open
+PO-609,Lupin,PH-019,500,2026-11-22,Confirmed
+PO-610,Glenmark,PH-063,1000,2026-11-18,Open
+PO-611,Biocon,PH-070,200,2026-11-13,Received
+PO-612,Glenmark,PH-006,1000,2026-11-27,Open
+PO-613,Lupin,PH-046,200,2026-10-28,Received
+PO-614,Lupin,PH-044,500,2026-11-21,Confirmed
+PO-615,Lupin,PH-064,1000,2026-11-21,Confirmed
+PO-616,Zydus,PH-057,200,2026-11-23,Open
+PO-617,Lupin,PH-012,200,2026-11-20,Confirmed
+PO-618,Biocon,PH-010,500,2026-11-25,Open
+PO-619,Glenmark,PH-009,500,2026-11-20,Confirmed
+PO-620,Sun Pharma,PH-065,1000,2026-11-05,Received
+PO-621,Cipla,PH-029,500,2026-11-03,Received
+PO-622,Lupin,PH-067,500,2026-11-22,Open
+PO-623,Dr Reddys,PH-059,200,2026-11-22,Open
+PO-624,Zydus,PH-017,200,2026-11-23,Confirmed
+PO-625,Glenmark,PH-015,200,2026-11-21,Confirmed
+PO-626,Zydus,PH-061,500,2026-11-25,Confirmed
+PO-627,Sun Pharma,PH-016,1000,2026-11-25,Open
+PO-628,Dr Reddys,PH-023,200,2026-11-15,Received
+PO-629,Dr Reddys,PH-033,1000,2026-11-26,Confirmed
+PO-0688,Alkem,PH-013,300,2026-11-14,Delayed – supplier stock issue

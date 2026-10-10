@@ -6,6 +6,7 @@ All actions are simulated decision-support records. No physical dispatches,
 financial transactions, or real-world warehouse modifications are performed.
 """
 
+import hashlib
 import json
 import os
 import uuid
@@ -16,6 +17,7 @@ from typing import Any, Dict, List, Optional
 DEFAULT_STORAGE_FILE = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "data", "actions_store.json"
 )
+SIMULATED_REVIEW_NOTICE = "Simulated review; pharmacist identity is not authenticated."
 
 
 def _load_store(file_path: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
@@ -39,8 +41,10 @@ def _load_store(file_path: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
 def _save_store(store: Dict[str, Dict[str, Any]], file_path: Optional[str] = None) -> bool:
     """Saves action dictionary to the local JSON store."""
     target_path = file_path or DEFAULT_STORAGE_FILE
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
     try:
+        parent_dir = os.path.dirname(target_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
         with open(target_path, "w", encoding="utf-8") as f:
             json.dump(store, f, indent=2, default=str)
         return True
@@ -98,9 +102,63 @@ def create_action(
         "reviewed_at": None,
         "review_decision": None,
         "is_simulated": True,
+        "review_status_note": SIMULATED_REVIEW_NOTICE,
+        "pharmacist_identity_authenticated": False,
     }
 
     return save_action(action_record, file_path)
+
+
+def stage_excursion_review(
+    excursion: Dict[str, Any],
+    file_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Stage a simulated QA review for a recorded temperature excursion.
+
+    This records evidence only; it does not quarantine stock or identify batches
+    that are absent from the excursion findings.
+    """
+    required = ("warehouse", "cold_room", "start_time", "end_time", "peak_temp_c", "limit_max", "readings_above_limit")
+    missing = [key for key in required if key not in excursion or excursion[key] is None]
+    if missing:
+        return {"status": "error", "message": f"Excursion evidence is incomplete: {', '.join(missing)}."}
+
+    identity = [str(excursion[key]) for key in ("warehouse", "cold_room", "start_time", "end_time")]
+    excursion_id = hashlib.sha256("|".join(identity).encode("utf-8")).hexdigest()[:16].upper()
+    for existing in list_all_actions(file_path):
+        existing_details = existing.get("details", {})
+        if (
+            existing.get("action_type") == "quarantine_excursion_stock"
+            and existing_details.get("excursion_id") == excursion_id
+        ):
+            return {"status": "duplicate", "action": existing, "message": "This excursion already has a staged review action."}
+
+    affected_batches = list(excursion.get("affected_batches") or [])
+    evidence = {
+        "excursion_id": excursion_id,
+        "facility": str(excursion["warehouse"]),
+        "cold_storage_unit": str(excursion["cold_room"]),
+        "event_time_window": {"start": str(excursion["start_time"]), "end": str(excursion["end_time"])},
+        "peak_temperature_c": float(excursion["peak_temp_c"]),
+        "configured_upper_limit_c": float(excursion["limit_max"]),
+        "readings_above_limit": int(excursion["readings_above_limit"]),
+        "affected_batches": affected_batches,
+        "batch_identification_status": "identified" if affected_batches else "pending",
+        "batch_identification_note": (
+            "Use only the batch IDs present in the recorded excursion findings."
+            if affected_batches
+            else "Batch identification is pending; no affected batch IDs or quantities were provided."
+        ),
+        "review_requirement": (
+            "Qualified human/QA/pharmacist review is required. Reviewer identity is not authenticated."
+        ),
+    }
+    details = dict(evidence)
+    details["evidence"] = evidence
+    action = create_action("quarantine_excursion_stock", details, file_path=file_path)
+    if action.get("status") == "error" or not action.get("action_id"):
+        return {"status": "error", "message": action.get("message", "Could not save excursion review action.")}
+    return {"status": "created", "action": action, "message": "Excursion review action saved."}
 
 
 def get_action(action_id: str, file_path: Optional[str] = None) -> Dict[str, Any]:
@@ -192,6 +250,9 @@ def review_action(
     action["review_decision"] = normalized_decision
     action["reviewer"] = cleaned_reviewer
     action["reviewed_at"] = datetime.now().isoformat()
+    action["is_simulated"] = True
+    action["review_status_note"] = SIMULATED_REVIEW_NOTICE
+    action["pharmacist_identity_authenticated"] = False
 
     return save_action(action, file_path)
 

@@ -261,6 +261,84 @@ class TestAgentInvestigation(unittest.TestCase):
             report = agent.run_investigation("Investigate batch B2231")
             self.assertIn("OpenAI", report["engine_mode"])
 
+    def test_expiry_investigation_reports_records_without_recall_options(self):
+        report = agent.run_investigation("Check Expiry")
+
+        self.assertEqual(report["intent"], "check_expiry")
+        self.assertEqual(report["options_comparison"]["status"], "not_applicable")
+        self.assertEqual(report["options_comparison"]["options"], [])
+        self.assertEqual(
+            report["options_comparison"]["message"],
+            "Not applicable to this investigation.",
+        )
+        self.assertIn(
+            {"sku": "SKU-RAB-VAX", "batch": "B8801", "warehouse": "WH-Central-Bengaluru", "qty": 45, "expiry_date": "2026-09-30", "days_expired": 9},
+            report["evidence"]["expired_batches"],
+        )
+        self.assertIn(
+            {"sku": "SKU-PARA-650", "batch": "B3011", "warehouse": "WH-Central-Bengaluru", "qty": 850, "expiry_date": "2026-10-25", "days_remaining": 16},
+            report["evidence"]["near_expiry_batches"],
+        )
+        self.assertTrue(any("B8801" in finding and "45 units" in finding for finding in report["findings"]))
+        self.assertTrue(any("B3011" in finding and "850 units" in finding for finding in report["findings"]))
+
+    def test_recall_investigation_still_returns_verified_options(self):
+        report = agent.run_investigation("Investigate batch B2231 and recommend next steps")
+
+        self.assertEqual(report["options_comparison"]["status"], "feasible_comparison")
+        self.assertEqual(len(report["options_comparison"]["options"]), 3)
+        self.assertEqual(
+            report["recommendation"]["suggested_action"]["details"]["replacement_batch"],
+            "B2240",
+        )
+
+    def test_suggested_investigations_route_to_distinct_evidence(self):
+        batch = agent.run_investigation("Investigate batch B2231 and recommend the next steps.")
+        cold_chain = agent.run_investigation("Which batches have possible temperature excursions?")
+        seasonal_report = agent.run_investigation(
+            "Forecast external Kaggle weekly pharmacy sales for category M01AB."
+        )
+        comparison = agent.run_investigation("Compare replacement options for recalled batch B2231")
+
+        self.assertEqual(batch["intent"], "investigate_batch")
+        self.assertEqual(
+            batch["tools_used"],
+            ["trace_batch", "check_recall", "get_affected_customers"],
+        )
+        self.assertTrue(any("640 units dispatched" in finding for finding in batch["findings"]))
+
+        self.assertEqual(cold_chain["intent"], "check_environment")
+        self.assertEqual(cold_chain["tools_used"], ["check_temperature_breach"])
+        self.assertTrue(cold_chain["evidence"]["excursions"])
+        cold_text = " ".join(cold_chain["findings"] + [cold_chain["recommendation"]["summary"]])
+        self.assertNotIn("B2231", cold_text)
+        self.assertNotIn("640 units dispatched", cold_text)
+        self.assertNotIn("CRITICAL RECALL NOTICE", cold_text)
+
+        self.assertEqual(seasonal_report["intent"], "forecast_demand")
+        self.assertEqual(seasonal_report["tools_used"], ["forecast_external_weekly_sales"])
+        self.assertTrue(seasonal_report["evidence"]["external_forecast"]["success"])
+        seasonal_text = " ".join(seasonal_report["findings"] + [seasonal_report["recommendation"]["summary"]])
+        self.assertIn("External Kaggle", seasonal_text)
+        self.assertIn("not an Arogya Pharma SKU", seasonal_text)
+        self.assertNotIn("B2231", seasonal_text)
+        self.assertNotIn("640 units dispatched", seasonal_text)
+
+        self.assertEqual(comparison["intent"], "compare_options")
+        self.assertIn("compare_options", comparison["tools_used"])
+        self.assertEqual(comparison["options_comparison"]["status"], "feasible_comparison")
+        self.assertTrue(comparison["findings"][0].startswith("Replacement comparison:"))
+
+    def test_replacement_comparison_without_batch_has_no_default_recall_report(self):
+        report = agent.run_investigation("Compare replacement options")
+
+        self.assertEqual(report["intent"], "compare_options")
+        self.assertEqual(report["tools_used"], [])
+        self.assertEqual(report["options_comparison"]["status"], "insufficient_data")
+        self.assertIn("Batch ID", report["options_comparison"]["missing_information"])
+        self.assertNotIn("B2231", " ".join(report["findings"]))
+        self.assertNotIn("B2240", " ".join(report["findings"]))
+
     def test_options_comparison_without_data(self):
         """Verifies compare_options honestly refuses comparison when inventory data is missing."""
         comp = agent.compare_options(
@@ -269,6 +347,16 @@ class TestAgentInvestigation(unittest.TestCase):
         )
         self.assertEqual(comp["status"], "insufficient_data")
         self.assertEqual(len(comp["options"]), 0)
+
+    def test_options_comparison_does_not_fill_missing_recall_evidence(self):
+        comp = agent.compare_options(
+            {"type": "recall_replacement", "batch_id": "B2231"},
+            {"inventory_available": True, "recalled_wh_qty": 180},
+        )
+
+        self.assertEqual(comp["status"], "insufficient_data")
+        self.assertEqual(comp["options"], [])
+        self.assertIn("recalled_disp_qty", comp["missing_information"])
 
     def test_b2231_recall_exposure_and_hybrid_allocation(self):
         """Verify recall exposure, PO deficit, and hybrid allocation against live project data."""

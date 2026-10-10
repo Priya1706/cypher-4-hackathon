@@ -6,7 +6,11 @@ affected customer traceability (23 chemists, 2 hospitals, 640 units), and expiry
 """
 
 import os
+import tempfile
 import unittest
+from unittest.mock import patch
+
+import pandas as pd
 import modules.inventory as inv
 
 class TestInventoryModule(unittest.TestCase):
@@ -58,6 +62,85 @@ class TestInventoryModule(unittest.TestCase):
         # B3011 expires on 2026-10-25 (within 16 days)
         near_expiry_batches = [b["batch"] for b in res["near_expiry"]]
         self.assertIn("B3011", near_expiry_batches)
+
+    def test_load_inventory_accepts_official_batch_inventory_filename(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pd.DataFrame([
+                {"sku": "PH-X", "batch": "LOT-X", "warehouse": "Bengaluru", "storage_location": "AMB", "qty": 5, "mfg_date": "2025-01-01", "expiry_date": "2026-12-01"},
+                {"sku": "PH-X", "batch": "LOT-X", "warehouse": "Mysuru", "storage_location": "AMB", "qty": 7, "mfg_date": "2025-01-01", "expiry_date": "2027-01-01"},
+            ]).to_csv(os.path.join(temp_dir, "batch_inventory.csv"), index=False)
+            result = inv.load_inventory(temp_dir)
+            traced = inv.trace_batch("LOT-X", data_dir=temp_dir)
+
+        records = result["inventory"]
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records["batch"].tolist(), ["LOT-X", "LOT-X"])
+        self.assertEqual(records["expiry_date"].tolist(), ["2026-12-01", "2027-01-01"])
+        self.assertEqual(records["warehouse"].tolist(), ["Bengaluru", "Mysuru"])
+        self.assertEqual(records["storage_location"].tolist(), ["AMB", "AMB"])
+        self.assertEqual(
+            [record["storage_location"] for record in traced["data"]["warehouses"]],
+            ["AMB", "AMB"],
+        )
+
+    def test_trace_batch_preserves_multiple_expiry_dates(self):
+        inventory_data = {
+            "inventory": pd.DataFrame([
+                {"sku": "SKU-TEST", "batch": "B-TEST", "warehouse": "WH-A", "qty": 10, "mfg_date": "2025-01-01", "expiry_date": "2026-12-01"},
+                {"sku": "SKU-TEST", "batch": "B-TEST", "warehouse": "WH-B", "qty": 15, "mfg_date": "2025-01-01", "expiry_date": "2027-01-01"},
+            ]),
+            "products": pd.DataFrame(),
+            "dispatches": pd.DataFrame(),
+            "customers": pd.DataFrame(),
+            "warnings": [],
+        }
+        with patch.object(inv, "load_inventory", return_value=inventory_data), patch.object(
+            inv, "check_recall", return_value={"is_recalled": False, "evidence": {}}
+        ):
+            result = inv.trace_batch("B-TEST")
+
+        self.assertEqual(result["data"]["expiry_date"], "Multiple dates; see warehouse records")
+        self.assertEqual(result["data"]["expiry_dates"], ["2026-12-01", "2027-01-01"])
+        self.assertEqual(
+            result["data"]["warehouses"],
+            [
+                {"warehouse": "WH-A", "qty": 10, "mfg_date": "2025-01-01", "expiry_date": "2026-12-01"},
+                {"warehouse": "WH-B", "qty": 15, "mfg_date": "2025-01-01", "expiry_date": "2027-01-01"},
+            ],
+        )
+
+    def test_trace_batch_keeps_batches_sharing_a_sku_separate(self):
+        inventory_data = {
+            "inventory": pd.DataFrame([
+                {"sku": "SKU-SHARED", "batch": "LOT-ALPHA", "warehouse": "WH-A", "qty": 12, "mfg_date": "2025-01-01", "expiry_date": "2026-12-01"},
+                {"sku": "SKU-SHARED", "batch": "LOT-BETA", "warehouse": "WH-B", "qty": 30, "mfg_date": "2025-02-01", "expiry_date": "2027-02-01"},
+            ]),
+            "products": pd.DataFrame(),
+            "dispatches": pd.DataFrame(),
+            "customers": pd.DataFrame(),
+            "warnings": [],
+        }
+        with patch.object(inv, "load_inventory", return_value=inventory_data), patch.object(
+            inv, "check_recall", return_value={"is_recalled": False, "evidence": {}}
+        ):
+            alpha = inv.trace_batch("LOT-ALPHA")
+            beta = inv.trace_batch("LOT-BETA")
+
+        self.assertEqual(alpha["data"]["sku"], beta["data"]["sku"])
+        self.assertEqual(alpha["data"]["batch_id"], "LOT-ALPHA")
+        self.assertEqual(alpha["data"]["total_warehouse_stock"], 12)
+        self.assertEqual(alpha["data"]["expiry_dates"], ["2026-12-01"])
+        self.assertEqual(
+            alpha["data"]["warehouses"],
+            [{"warehouse": "WH-A", "qty": 12, "mfg_date": "2025-01-01", "expiry_date": "2026-12-01"}],
+        )
+        self.assertEqual(beta["data"]["batch_id"], "LOT-BETA")
+        self.assertEqual(beta["data"]["total_warehouse_stock"], 30)
+        self.assertEqual(beta["data"]["expiry_dates"], ["2027-02-01"])
+        self.assertEqual(
+            beta["data"]["warehouses"],
+            [{"warehouse": "WH-B", "qty": 30, "mfg_date": "2025-02-01", "expiry_date": "2027-02-01"}],
+        )
 
     def test_unknown_batch_returns_not_found(self):
         """Verify searching an unknown batch ID gracefully returns not_found without error."""
