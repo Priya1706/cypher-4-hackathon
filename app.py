@@ -31,15 +31,15 @@ st.markdown(
     """
     <style>
     :root {
-        --canvas: #f3f5f0;
+        --canvas: #ecf2ed;
         --surface: #ffffff;
-        --surface-alt: #f7f9f6;
-        --sage-pale: #e7eee6;
-        --ink: #25342e;
-        --muted: #68766e;
-        --sage: #718b78;
+        --surface-alt: #f3f7f3;
+        --sage-pale: #e3ece4;
+        --ink: #090a0a;
+        --muted: #535755;
+        --sage: #b6c5b9;
         --sage-dark: #526c5a;
-        --line: #e0e6df;
+        --line: #bec8d4;
         color-scheme: light;
     }
     .stApp { background: var(--canvas); color: var(--ink); }
@@ -48,8 +48,17 @@ st.markdown(
         box-sizing: border-box;
         width: 100%;
         max-width: 100%;
-        padding: 2.75rem clamp(1rem, 2vw, 2rem) 2.5rem;
+        padding: 1.35rem clamp(1rem, 2vw, 2rem) 2.5rem;
     }
+    .brand-header { display: flex; align-items: center; gap: 1rem; padding: 0.8rem 0 0.25rem; }
+    .brand-mark {
+        display: grid; place-items: center; flex: 0 0 3.25rem; width: 3.25rem; height: 3.25rem;
+        border-radius: 12px; background: #dce8dd; border: 1px solid var(--line);
+        color: var(--sage-dark); font-size: 1.05rem; font-weight: 800; letter-spacing: -0.05em;
+    }
+    .brand-copy h1 { margin: 0; font-size: clamp(1.55rem, 2.4vw, 2rem); line-height: 1.15; }
+    .brand-copy p { margin: 0.3rem 0 0; color: var(--muted); }
+    .safety-note { margin: 0.55rem 0 1.15rem; color: var(--muted); }
     h1, h2, h3, h4 {
         color: var(--ink);
         letter-spacing: -0.02em;
@@ -131,42 +140,42 @@ st.markdown(
         background: var(--surface);
         color: var(--ink);
         --gdg-bg-cell: #ffffff;
-        --gdg-bg-cell-medium: #f7f9f6;
-        --gdg-bg-header: #e7eee6;
-        --gdg-bg-header-hasFocus: #e7eee6;
-        --gdg-text-dark: #25342e;
-        --gdg-text-medium: #536259;
-        --gdg-border-color: #dce5dc;
-        --gdg-accent-color: #718b78;
+        --gdg-bg-cell-medium: #f3f7f3;
+        --gdg-bg-header: #e3ece4;
+        --gdg-bg-header-hasFocus: #e3ece4;
+        --gdg-text-dark: #090a0a;
+        --gdg-text-medium: #535755;
+        --gdg-border-color: #bec8d4;
+        --gdg-accent-color: #526c5a;
     }
     [data-testid="stDataFrame"] .stDataFrameGlideDataEditor {
-        --gdg-accent-color: #718b78 !important;
+        --gdg-accent-color: #526c5a !important;
         --gdg-accent-fg: #ffffff !important;
-        --gdg-accent-light: rgba(113, 139, 120, 0.12) !important;
-        --gdg-text-dark: #25342e !important;
-        --gdg-text-medium: #536259 !important;
-        --gdg-text-light: #68766e !important;
-        --gdg-text-bubble: #536259 !important;
-        --gdg-bg-icon-header: #536259 !important;
-        --gdg-fg-icon-header: #25342e !important;
-        --gdg-text-header: #536259 !important;
-        --gdg-text-group-header: #536259 !important;
+        --gdg-accent-light: rgba(82, 108, 90, 0.12) !important;
+        --gdg-text-dark: #090a0a !important;
+        --gdg-text-medium: #535755 !important;
+        --gdg-text-light: #535755 !important;
+        --gdg-text-bubble: #535755 !important;
+        --gdg-bg-icon-header: #535755 !important;
+        --gdg-fg-icon-header: #090a0a !important;
+        --gdg-text-header: #535755 !important;
+        --gdg-text-group-header: #535755 !important;
         --gdg-text-header-selected: #526c5a !important;
-        --gdg-bg-group-header: #e7eee6 !important;
+        --gdg-bg-group-header: #e3ece4 !important;
         --gdg-bg-group-header-hovered: #dbe6da !important;
         --gdg-bg-cell: #ffffff !important;
-        --gdg-bg-cell-medium: #f7f9f6 !important;
-        --gdg-bg-header: #e7eee6 !important;
+        --gdg-bg-cell-medium: #f3f7f3 !important;
+        --gdg-bg-header: #e3ece4 !important;
         --gdg-bg-header-has-focus: #dbe6da !important;
         --gdg-bg-header-hovered: #dbe6da !important;
-        --gdg-bg-bubble: #f7f9f6 !important;
-        --gdg-bg-bubble-selected: #e7eee6 !important;
-        --gdg-bg-search-result: rgba(113, 139, 120, 0.12) !important;
-        --gdg-border-color: #dce5dc !important;
-        --gdg-horizontal-border-color: #dce5dc !important;
-        --gdg-drilldown-border: #dce5dc !important;
+        --gdg-bg-bubble: #f3f7f3 !important;
+        --gdg-bg-bubble-selected: #e3ece4 !important;
+        --gdg-bg-search-result: rgba(82, 108, 90, 0.12) !important;
+        --gdg-border-color: #bec8d4 !important;
+        --gdg-horizontal-border-color: #bec8d4 !important;
+        --gdg-drilldown-border: #bec8d4 !important;
         --gdg-link-color: #526c5a !important;
-        --gdg-resize-indicator-color: #718b78 !important;
+        --gdg-resize-indicator-color: #526c5a !important;
     }
     [data-testid="stDataFrame"] [role="grid"],
     [data-testid="stDataFrame"] canvas {
@@ -194,9 +203,18 @@ st.markdown(
         white-space: normal;
         overflow-wrap: anywhere;
     }
+    [data-testid="stExpander"] { border-color: var(--line); border-radius: 9px; background: rgba(255, 255, 255, 0.55); }
+    [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
+    [data-testid="stSelectbox"] [data-baseweb="select"] > div { border-color: var(--line); background: var(--surface); }
     @media (max-width: 900px) {
-        .block-container { padding-left: 1rem; padding-right: 1rem; }
+        .block-container { padding-top: 1rem; padding-left: 1rem; padding-right: 1rem; }
         [data-testid="stDataFrame"], [data-testid="stTable"] { overflow-x: auto; }
+    }
+    @media (max-width: 600px) {
+        .brand-header { align-items: flex-start; gap: 0.7rem; }
+        .brand-mark { flex-basis: 2.8rem; width: 2.8rem; height: 2.8rem; }
+        .brand-copy h1 { font-size: 1.5rem; }
+        [data-testid="stMetric"] { padding: 0.7rem; }
     }
     </style>
     """,
@@ -210,15 +228,16 @@ if "executed_actions" not in st.session_state:
     st.session_state["executed_actions"] = set()
 
 # --- Header & Safety Banner ---
-logo_col, brand_col = st.columns([0.08, 0.92])
-with logo_col:
-    st.markdown("### BG")
-with brand_col:
-    st.markdown("## BatchGuard AI")
-    st.caption("Pharmaceutical supply-chain control tower · Arogya Pharma")
-st.caption(
-    "Decision support only. Actions are simulated and require qualified QA / QP approval; "
-    "no physical dispatches or financial orders are executed."
+st.markdown(
+    """<header class="brand-header">
+      <div class="brand-mark" aria-label="BatchGuard logo">BG</div>
+      <div class="brand-copy">
+        <h1>BatchGuard AI</h1>
+        <p>Pharmaceutical supply-chain control tower &middot; Arogya Pharma</p>
+      </div>
+    </header>
+    <p class="safety-note">Decision support only. Actions are simulated and require qualified QA / QP approval; no physical dispatches or financial orders are executed.</p>""",
+    unsafe_allow_html=True,
 )
 
 # --- Sidebar Controls & System Status ---
